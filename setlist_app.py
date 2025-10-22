@@ -1,258 +1,262 @@
 
 import json
-import io
 import streamlit as st
 
-# Optional Drag and Drop (used if available)
+# Drag & Drop via SortableJS wrapper
+HAS_DND = False
 try:
-    from streamlit_sortables import sort_items as sortable
+    from streamlit_sortables import sort_items as sortable  # okld/streamlit-sortables
     HAS_DND = True
 except Exception:
     HAS_DND = False
 
+# PDF export
+try:
+    from fpdf import FPDF
+    HAS_PDF = True
+except Exception:
+    HAS_PDF = False
+
 st.set_page_config(page_title="Setlist Builder", layout="wide")
 st.title("🎼 Setlist Builder")
 
-# ===== styles =====
 st.markdown("""
 <style>
-.stButton>button { background-color:#004D59; color:white; border:none; border-radius:8px; padding:8px 14px; }
-.stButton>button:hover { background-color:#00738A; }
-.section { background:#FDF1E7; padding:16px; border-radius:16px; margin-bottom:16px; }
-.gray-drop { background:#F3F4F6; border:1px dashed #cbd5e1; padding:12px; border-radius:12px; }
+.stButton>button { background-color:#0f172a; color:white; border:none; border-radius:10px; padding:8px 14px; }
+.stButton>button:hover { background-color:#334155; }
+.gray-drop { background:#F3F4F6; border:1px dashed #cbd5e1; padding:12px; border-radius:12px; min-height:56px; }
+.chip { display:inline-block; padding:8px 12px; border-radius:12px; background:#0f172a; color:#fff; margin:6px 6px 0 0; font-size:14px; }
 .song-line{ display:flex; align-items:center; justify-content:space-between; gap:8px;
-           padding:8px 10px; border:1px solid #e6e6e6; border-radius:10px; background:#fff; margin-bottom:6px; }
-.song-title{ font-weight:700; color:#004D59; }
-.song-meta{ font-size:12px; opacity:0.85; }
-.small{ font-size:12px; opacity:0.8; }
+           padding:8px 10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; margin-bottom:6px; }
+.song-title{ font-weight:700; color:#0f172a; }
+.song-meta{ font-size:12px; opacity:.85; }
 </style>
 """, unsafe_allow_html=True)
 
-# ===== helpers =====
-def mmss_to_seconds(txt_mm, txt_ss):
-    try:
-        m = int(txt_mm)
-    except Exception:
-        m = 0
-    try:
-        s = int(txt_ss)
-    except Exception:
-        s = 0
-    m = max(0, m); s = max(0, s)
-    return m*60 + s
+# ---------- helpers ----------
+def mmss_to_seconds(mm, ss):
+    try: m=int(mm)
+    except: m=0
+    try: s=int(ss)
+    except: s=0
+    return max(0,m)*60+max(0,s)
 
 def mmss_str_to_seconds(mmss: str):
-    if not mmss:
-        return 0
-    parts = str(mmss).strip().split(":")
-    if len(parts) == 2:
-        return mmss_to_seconds(parts[0], parts[1])
+    if not mmss: return 0
+    p=str(mmss).strip().split(":")
+    if len(p)==2: return mmss_to_seconds(p[0], p[1])
     return 0
 
-def seconds_to_mmss(total: int):
-    if total < 0: total = 0
-    m, s = divmod(int(total), 60)
+def seconds_to_mmss(t):
+    m,s=divmod(max(0,int(t)),60)
     return f"{m:02d}:{s:02d}"
-
-def ensure_state():
-    if "songs" not in st.session_state:
-        st.session_state["songs"] = {}   # id -> {title, artist, duration_s, key, note}
-    if "next_song_id" not in st.session_state:
-        st.session_state["next_song_id"] = 1
-    if "sets" not in st.session_state:
-        st.session_state["sets"] = [[]]  # list of lists of ids
-    if "concert_name" not in st.session_state:
-        st.session_state["concert_name"] = ""
-    if "library_order" not in st.session_state:
-        st.session_state["library_order"] = []
-    if "initialized" not in st.session_state:
-        st.session_state["initialized"] = False
 
 def total_duration_seconds(ids):
     return sum(st.session_state["songs"][sid]["duration_s"] for sid in ids)
 
-def export_concert_text(concert_name: str) -> str:
-    out = [f"Setliste {concert_name}", "="*(9+len(concert_name)),""]
-    for idx, set_ids in enumerate(st.session_state["sets"], start=1):
-        out.append(f"Set {idx}")
-        out.append("------")
-        for pos, sid in enumerate(set_ids, start=1):
-            s = st.session_state["songs"][sid]
-            out.append(f"{pos:>2}. {s['title']} ({seconds_to_mmss(s['duration_s'])})")
-        out.append(f"Set Dauer: {seconds_to_mmss(total_duration_seconds(set_ids))}\n")
-    total_all = sum(total_duration_seconds(s) for s in st.session_state["sets"])
-    out.append(f"Gesamtdauer: {seconds_to_mmss(total_all)}\n")
-    return "\n".join(out)
+def label_for_pool(sid):
+    s=st.session_state["songs"][sid]
+    return f"{s['title']} ({seconds_to_mmss(s['duration_s'])})"
 
-def export_suisa_csv() -> str:
-    out = ["Titel,Interpret,Tonart,Notiz"]
-    for set_ids in st.session_state["sets"]:
-        for sid in set_ids:
-            s = st.session_state["songs"][sid]
-            title = s["title"].replace(",", " ")
-            artist = (s.get("artist") or "").replace(",", " ")
-            key = (s.get("key") or "").replace(",", " ")
-            note = (s.get("note") or "").replace(",", " ")
-            out.append(f"{title},{artist},{key},{note}")
-    return "\n".join(out)
+def label_for_set(sid):
+    # same label string, we keep one canonical to track across lists
+    return label_for_pool(sid)
+
+def ensure_state():
+    ss=st.session_state
+    ss.setdefault("songs", {})
+    ss.setdefault("next_song_id", 1)
+    ss.setdefault("sets", [[],[]])
+    ss.setdefault("pool", [])
+    ss.setdefault("seeded", False)
+    ss.setdefault("concert_name", "")
 
 ensure_state()
 
-# ===== initial repertoire seed (can be edited later) =====
-REPERTOIRE_SEED = [
-    {"title":"Alors, dont start the blinding lights", "artist":"Dua Lipa, Stromae, The Weeknd", "mmss":"05:26"},
-    {"title":"Avicii", "artist":"Avicii", "mmss":"04:10"},
-    {"title":"Bella Ballerino", "artist":"Lucio Dalla", "mmss":""},
-    {"title":"Carmabesque", "artist":"Coldplay, Stromae, Bizet", "mmss":"06:00"},
-    {"title":"Clandestino", "artist":"Manu Chao", "mmss":"03:16"},
-    {"title":"Dance Monkey", "artist":"Tones and I", "mmss":"04:09"},
-    {"title":"Die with a smile", "artist":"Bruno Mars, Lady Gaga", "mmss":"04:15"},
-    {"title":"Emergency Hip Hop", "artist":"Diverse", "mmss":"04:50"},
-    {"title":"Feeling Good", "artist":"Anthony Newley, Leslie Bricusse", "mmss":"04:16"},
-    {"title":"Fireflies", "artist":"Owl City", "mmss":"03:24"},
-    {"title":"Hip Hop Mix 2", "artist":"Diverse", "mmss":"06:12"},
-    {"title":"Hopes Stay As They Were", "artist":"Harry Styles, Panic at the Disco, Justin Bieber", "mmss":"05:16"},
-    {"title":"Komet / Monsun", "artist":"Udo Lindenberg, Apache207, Tokio Hotel", "mmss":"03:34"},
-    {"title":"Leave the door open", "artist":"Silk Sonic", "mmss":"04:08"},
-    {"title":"Lets Get Bad", "artist":"J Lo, Billie Eilish", "mmss":"05:05"},
-    {"title":"No Roots", "artist":"Alice Merton", "mmss":"03:36"},
-    {"title":"Oh Johnny", "artist":"Jan Delay", "mmss":""},
-    {"title":"Raw", "artist":"Meute", "mmss":"05:00"},
-    {"title":"Romano Hip Hop", "artist":"Gipsy CZ", "mmss":"02:30"},
-    {"title":"The Code", "artist":"Nemo", "mmss":"03:12"},
-    {"title":"Toxic Industry", "artist":"Lil Nas, Britney Spears", "mmss":"03:20"},
-    {"title":"Valerie", "artist":"Mark Ronson, Amy Winehouse", "mmss":""},
-    {"title":"Vreneli vo Mahala", "artist":"Mahala Rai Banda, trad.", "mmss":"03:49"},
-    {"title":"Wasabi", "artist":"Leningrad", "mmss":""},
+# ---------- seed (Wasabi & Bella Ballerino entfernt) ----------
+SEED = [
+    {"title":"Alors, dont start the blinding lights","artist":"Dua Lipa, Stromae, The Weeknd","mmss":"05:26"},
+    {"title":"Avicii","artist":"Avicii","mmss":"04:10"},
+    {"title":"Carmabesque","artist":"Coldplay, Stromae, Bizet","mmss":"06:00"},
+    {"title":"Clandestino","artist":"Manu Chao","mmss":"03:16"},
+    {"title":"Dance Monkey","artist":"Tones and I","mmss":"04:09"},
+    {"title":"Die with a smile","artist":"Bruno Mars, Lady Gaga","mmss":"04:15"},
+    {"title":"Emergency Hip Hop","artist":"Diverse","mmss":"04:50"},
+    {"title":"Feeling Good","artist":"Anthony Newley, Leslie Bricusse","mmss":"04:16"},
+    {"title":"Fireflies","artist":"Owl City","mmss":"03:24"},
+    {"title":"Hip Hop Mix 2","artist":"Diverse","mmss":"06:12"},
+    {"title":"Hopes Stay As They Were","artist":"Harry Styles, Panic at the Disco, Justin Bieber","mmss":"05:16"},
+    {"title":"Komet / Monsun","artist":"Udo Lindenberg, Apache207, Tokio Hotel","mmss":"03:34"},
+    {"title":"Leave the door open","artist":"Silk Sonic","mmss":"04:08"},
+    {"title":"Lets Get Bad","artist":"J Lo, Billie Eilish","mmss":"05:05"},
+    {"title":"No Roots","artist":"Alice Merton","mmss":"03:36"},
+    {"title":"Oh Johnny","artist":"Jan Delay","mmss":""},
+    {"title":"Raw","artist":"Meute","mmss":"05:00"},
+    {"title":"Romano Hip Hop","artist":"Gipsy CZ","mmss":"02:30"},
+    {"title":"The Code","artist":"Nemo","mmss":"03:12"},
+    {"title":"Toxic Industry","artist":"Lil Nas, Britney Spears","mmss":"03:20"},
+    {"title":"Valerie","artist":"Mark Ronson, Amy Winehouse","mmss":""},
+    {"title":"Vreneli vo Mahala","artist":"Mahala Rai Banda, trad.","mmss":"03:49"}
 ]
-
-if not st.session_state["initialized"]:
-    # only seed once
-    for seed in REPERTOIRE_SEED:
+if not st.session_state["seeded"]:
+    for s in SEED:
         sid = st.session_state["next_song_id"]; st.session_state["next_song_id"] += 1
         st.session_state["songs"][sid] = {
-            "title": seed["title"],
-            "artist": seed.get("artist",""),
-            "duration_s": mmss_str_to_seconds(seed.get("mmss","")),
+            "title": s["title"],
+            "artist": s.get("artist",""),
+            "duration_s": mmss_str_to_seconds(s.get("mmss","")),
             "key": "",
-            "note": "",
+            "tempo": ""  # formerly "note"
         }
-        st.session_state["library_order"].append(sid)
-    st.session_state["initialized"] = True
+        st.session_state["pool"].append(sid)
+    st.session_state["seeded"] = True
 
-# ===== top: repertoire list =====
-with st.expander("🎵 Repertoire", expanded=True):
-    st.caption("Alle vorhandenen Songs. Oben fix angezeigt.")
-    # show and allow ordering in repertoire
-    ids = [i for i in st.session_state["library_order"] if i in st.session_state["songs"]]
+# ---------- Songpool (cross-list DnD) ----------
+st.subheader("🎒 Songpool")
+st.caption("Ziehe Songs per Drag & Drop direkt in ein Set. Anzeigen: Titel und Dauer.")
+
+# Build label maps
+id_to_label = {}
+for sid in list(st.session_state["songs"].keys()):
+    id_to_label[sid] = label_for_pool(sid)
+
+# Compose lists of labels for each container
+pool_labels = [id_to_label[sid] for sid in st.session_state["pool"]]
+set_labels = [[id_to_label[sid] for sid in s] for s in st.session_state["sets"]]
+
+# Render pool + sets with common group for cross-list
+cols = st.columns([1,1])
+with cols[0]:
+    st.markdown("<div class='gray-drop'>Songpool</div>", unsafe_allow_html=True)
     if HAS_DND:
-        # present as simple labels with duration
-        labels = [f"{st.session_state['songs'][i]['title']} — {seconds_to_mmss(st.session_state['songs'][i]['duration_s'])}" for i in ids]
-        new_labels = sortable(labels, direction="vertical", key="repertoire_dnd")
-        inv = {f"{st.session_state['songs'][i]['title']} — {seconds_to_mmss(st.session_state['songs'][i]['duration_s'])}": i for i in ids}
-        st.session_state["library_order"] = [inv[l] for l in new_labels]
-    # lines with quick add
-    for i in st.session_state["library_order"]:
-        s = st.session_state["songs"][i]
-        c1,c2,c3,c4,c5 = st.columns([3,3,1,1,2])
-        with c1: st.markdown(f"<div class='song-title'>{s['title']}</div>", unsafe_allow_html=True)
-        with c2: st.markdown(f"<div class='song-meta'>{s.get('artist','')}</div>", unsafe_allow_html=True)
-        with c3: st.markdown(f"<div class='song-meta'>{seconds_to_mmss(s['duration_s'])}</div>", unsafe_allow_html=True)
-        with c4: st.markdown(f"<div class='song-meta'>{s.get('key','')}</div>", unsafe_allow_html=True)
-        with c5:
-            if st.session_state["sets"]:
-                target = st.selectbox("zu Set", [f"Set {idx+1}" for idx in range(len(st.session_state["sets"]))], key=f"addsel_{i}")
-                if st.button("hinzufuegen", key=f"btn_add_{i}"):
-                    target_idx = int(target.split(" ")[1]) - 1
-                    st.session_state["sets"][target_idx].append(i)
-                    st.success(f"{s['title']} hinzugefuegt zu {target}")
+        pool_new = sortable(pool_labels, direction="vertical", key="pool", group="songs")
+    else:
+        pool_new = pool_labels
+        st.info("Drag & Drop Gruppe aktiv, falls streamlit-sortables installiert ist.")
 
-# ===== add new song form =====
-with st.expander("➕ Neuen Song anlegen", expanded=True):
-    with st.form("new_song_form", clear_on_submit=True):
-        a,b,c,d,e = st.columns([3,3,1,1,2])
-        with a:
-            title = st.text_input("Titel*", placeholder="z. B. Uptown Funk")
-        with b:
-            artist = st.text_input("Interpret optional", placeholder="z. B. Mark Ronson ft. Bruno Mars")
-        with c:
-            mm = st.number_input("Minuten", min_value=0, max_value=59, value=3, step=1)
-        with d:
-            ss = st.number_input("Sekunden", min_value=0, max_value=59, value=30, step=5)
-        with e:
-            key = st.text_input("Tonart optional", placeholder="z. B. Bb, Eb, Cm")
-        note = st.text_input("Notiz optional", placeholder="Hinweise, Einsaetze, Tempo")
-        submit = st.form_submit_button("Song speichern")
-    if submit:
-        if not title.strip():
-            st.warning("Bitte einen Titel eingeben")
-        else:
-            sid = st.session_state["next_song_id"]; st.session_state["next_song_id"] += 1
-            st.session_state["songs"][sid] = {
-                "title": title.strip(),
-                "artist": artist.strip(),
-                "duration_s": mmss_to_seconds(mm, ss),
-                "key": key.strip(),
-                "note": note.strip(),
-            }
-            st.session_state["library_order"].append(sid)
-            st.success(f"Song {title} gespeichert")
-
-# ===== sets controls and gray drop zones =====
-with st.expander("🧩 Sets und Reihenfolge", expanded=True):
-    # select number of sets as selectbox (not slider)
-    count = st.selectbox("Anzahl Sets", [1,2,3,4,5], index=len(st.session_state["sets"]) - 1)
+# Sets header and control
+st.subheader("🧩 Sets")
+top = st.columns([1,1,2])
+with top[0]:
+    count = st.selectbox("Anzahl Sets", [1,2,3,4,5], index=len(st.session_state["sets"])-1)
     if count != len(st.session_state["sets"]):
         old = st.session_state["sets"]
         st.session_state["sets"] = old + [[] for _ in range(count-len(old))] if count>len(old) else old[:count]
+        set_labels = [[id_to_label[sid] for sid in s] for s in st.session_state["sets"]]
 
-    for set_idx in range(len(st.session_state["sets"])):
-        set_ids = st.session_state["sets"][set_idx]
-        st.markdown(f"**Set {set_idx+1}**  Dauer {seconds_to_mmss(total_duration_seconds(set_ids))}")
-        st.markdown("<div class='gray-drop'>", unsafe_allow_html=True)
-
-        if set_ids:
-            # drag and drop ordering within the set
-            if HAS_DND:
-                labels = [f"{st.session_state['songs'][sid]['title']} — {seconds_to_mmss(st.session_state['songs'][sid]['duration_s'])}" for sid in set_ids]
-                new_order = sortable(labels, direction="vertical", key=f"set_dnd_{set_idx}")
-                inv = {f"{st.session_state['songs'][sid]['title']} — {seconds_to_mmss(st.session_state['songs'][sid]['duration_s'])}": sid for sid in set_ids}
-                st.session_state["sets"][set_idx] = [inv[l] for l in new_order]
-            # show rows with remove buttons
-            for pos, sid in enumerate(st.session_state["sets"][set_idx]):
-                s = st.session_state["songs"][sid]
-                c1,c2,c3,c4 = st.columns([6,1,1,1])
-                with c1: st.markdown(f"<div class='song-line'><span class='song-title'>{s['title']}</span> <span class='song-meta'>({seconds_to_mmss(s['duration_s'])}) · {s.get('artist','')} · {s.get('key','')}</span></div>", unsafe_allow_html=True)
-                with c2:
-                    if st.button("↑", key=f"up_{set_idx}_{sid}") and pos>0:
-                        st.session_state["sets"][set_idx][pos-1], st.session_state["sets"][set_idx][pos] = st.session_state["sets"][set_idx][pos], st.session_state["sets"][set_idx][pos-1]
-                        st.experimental_rerun()
-                with c3:
-                    if st.button("↓", key=f"down_{set_idx}_{sid}") and pos<len(st.session_state['sets'][set_idx])-1:
-                        st.session_state["sets"][set_idx][pos+1], st.session_state["sets"][set_idx][pos] = st.session_state["sets"][set_idx][pos], st.session_state["sets"][set_idx][pos+1]
-                        st.experimental_rerun()
-                with c4:
-                    if st.button("✖", key=f"del_{set_idx}_{sid}"):
-                        st.session_state["sets"][set_idx].remove(sid)
-                        st.experimental_rerun()
+# Draw sets in grid
+set_cols = st.columns(len(st.session_state["sets"])) if st.session_state["sets"] else []
+new_set_labels = []
+for i, c in enumerate(set_cols):
+    with c:
+        st.markdown(f"<div class='gray-drop'>Set {i+1}</div>", unsafe_allow_html=True)
+        if HAS_DND:
+            new_labels = sortable(set_labels[i] if i < len(set_labels) else [], direction="vertical", key=f"set_{i}", group="songs")
         else:
-            st.caption("Noch keine Songs in diesem Set")
+            new_labels = set_labels[i] if i < len(set_labels) else []
+        new_set_labels.append(new_labels)
 
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.write("")
+# Recompute membership from returned labels
+label_to_id = {v:k for k,v in id_to_label.items()}
+# Pool
+new_pool_ids = [label_to_id[l] for l in pool_new if l in label_to_id]
+# Sets
+new_sets_ids = []
+for lab_list in new_set_labels:
+    new_sets_ids.append([label_to_id[l] for l in lab_list if l in label_to_id])
 
-# ===== export =====
-with st.expander("📋 Zusammenfassung und Export", expanded=True):
-    total = 0
-    for i, ids in enumerate(st.session_state["sets"], start=1):
-        dur = total_duration_seconds(ids); total += dur
-        st.markdown(f"**Set {i}** – {len(ids)} Songs · Dauer **{seconds_to_mmss(dur)}**")
-    st.markdown(f"**Gesamt** {sum(len(s) for s in st.session_state['sets'])} Songs · **{seconds_to_mmss(total)}**")
+# Update state
+st.session_state["pool"] = new_pool_ids
+st.session_state["sets"] = new_sets_ids
 
-    c1,c2 = st.columns(2)
-    with c1:
-        txt = export_concert_text(st.session_state["concert_name"] or "Setliste")
-        st.download_button("⬇️ Setliste Konzert TXT", data=txt.encode("utf-8"), file_name="setliste_konzert.txt", mime="text/plain")
-    with c2:
-        csv = export_suisa_csv()
-        st.download_button("⬇️ SUISA Liste CSV", data=csv.encode("utf-8"), file_name="suisa_liste.csv", mime="text/csv")
+# ---------- Add new song (lands in pool) ----------
+st.subheader("➕ Neuen Song anlegen")
+with st.form("new_song", clear_on_submit=True):
+    a,b,c,d,e = st.columns([3,3,1,1,2])
+    with a: title = st.text_input("Titel*")
+    with b: artist = st.text_input("Interpret optional")
+    with c: mm = st.number_input("Minuten",0,59,3)
+    with d: ss = st.number_input("Sekunden",0,59,30,5)
+    with e: key = st.text_input("Tonart optional")
+    tempo = st.text_input("Tempo optional", placeholder="z. B. 120 bpm oder Ballade")
+    ok = st.form_submit_button("Song speichern")
+if ok and title.strip():
+    sid = st.session_state["next_song_id"]; st.session_state["next_song_id"] += 1
+    st.session_state["songs"][sid] = {
+        "title": title.strip(),
+        "artist": artist.strip(),
+        "duration_s": mmss_to_seconds(mm, ss),
+        "key": key.strip(),
+        "tempo": tempo.strip()
+    }
+    st.session_state["pool"].append(sid)
+    st.success(f"{title} gespeichert und in den Songpool gelegt.")
+
+# ---------- Show sets with details (in list below) ----------
+st.markdown("### Aktuelle Sets (Details)")
+for i, ids in enumerate(st.session_state["sets"]):
+    st.markdown(f"**Set {i+1}** — Dauer {seconds_to_mmss(total_duration_seconds(ids))}")
+    for sid in ids:
+        s = st.session_state["songs"][sid]
+        st.markdown(
+            f"<div class='song-line'><span class='song-title'>{s['title']}</span>"
+            f"<span class='song-meta'>({seconds_to_mmss(s['duration_s'])}) · {s.get('key','')} · {s.get('tempo','')}</span></div>",
+            unsafe_allow_html=True
+        )
+
+# ---------- Exports ----------
+def make_pdf_concert(concert_name: str):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, f"Setliste {concert_name}", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    for idx, ids in enumerate(st.session_state["sets"], start=1):
+        pdf.set_font("Helvetica","B",12); pdf.cell(0,8,f"Set {idx}",ln=1)
+        pdf.set_font("Helvetica","",11)
+        for pos,sid in enumerate(ids, start=1):
+            s=st.session_state["songs"][sid]
+            left = f"{pos}. {s['title']}"
+            right = f"{seconds_to_mmss(s['duration_s'])}   {s.get('key','')}   {s.get('tempo','')}"
+            pdf.cell(120,7,left,0,0)
+            pdf.cell(70,7,right,0,1,"R")
+        pdf.set_font("Helvetica","B",11)
+        pdf.cell(120,7,"Set Dauer",0,0)
+        pdf.cell(70,7,seconds_to_mmss(total_duration_seconds(ids)),0,1,"R")
+        pdf.ln(2)
+    total=sum(total_duration_seconds(x) for x in st.session_state["sets"])
+    pdf.set_font("Helvetica","B",12)
+    pdf.cell(120,8,"Gesamtdauer",0,0)
+    pdf.cell(70,8,seconds_to_mmss(total),0,1,"R")
+    return pdf.output(dest="S").encode("latin1","replace")
+
+def make_pdf_suisa(concert_name: str):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, f"SUISA Liste {concert_name}", ln=1)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(110,8,"Titel",0,0)
+    pdf.cell(80,8, "Interpret",0,1)
+    pdf.set_font("Helvetica","",11)
+    for ids in st.session_state["sets"]:
+        for sid in ids:
+            s=st.session_state["songs"][sid]
+            pdf.cell(110,7,s["title"],0,0)
+            pdf.cell(80,7,s.get("artist",""),0,1)
+    return pdf.output(dest="S").encode("latin1","replace")
+
+st.markdown("### 📄 Export")
+c1,c2 = st.columns(2)
+with c1:
+    if HAS_PDF:
+        pdf_bytes = make_pdf_concert(st.session_state.get("concert_name","Setliste"))
+        st.download_button("⬇️ Konzert PDF", data=pdf_bytes, file_name="setliste_konzert.pdf", mime="application/pdf")
+    else:
+        st.info("PDF Export erfordert fpdf2.")
+with c2:
+    if HAS_PDF:
+        pdf2 = make_pdf_suisa(st.session_state.get("concert_name","Setliste"))
+        st.download_button("⬇️ SUISA PDF", data=pdf2, file_name="suisa_liste.pdf", mime="application/pdf")
+    else:
+        st.info("PDF Export erfordert fpdf2.")
