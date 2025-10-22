@@ -2,7 +2,7 @@
 import json
 import streamlit as st
 
-# Try optional DnD for in-list reordering
+# Optional in-set Drag and Drop
 HAS_SORTABLES = False
 try:
     from streamlit_sortables import sort_items as sortable
@@ -20,21 +20,28 @@ except Exception:
 st.set_page_config(page_title="Setlist Builder", layout="wide")
 st.title("🎼 Setlist Builder")
 
+# ===== styles =====
 st.markdown("""
 <style>
-.stButton>button { background-color:#0f172a; color:white; border:none; border-radius:10px; padding:8px 14px; }
+:root { --ink:#0f172a; --muted:#64748b; --chip:#0f172a; --chipText:#ffffff; --drop:#f3f4f6; }
+.stButton>button { background-color:var(--ink); color:white; border:none; border-radius:10px; padding:8px 14px; }
 .stButton>button:hover { background-color:#334155; }
-.gray-drop { background:#F3F4F6; border:1px dashed #cbd5e1; padding:12px; border-radius:12px; min-height:56px; }
-.chip { display:inline-block; padding:8px 12px; border-radius:12px; background:#0f172a; color:#fff; margin:6px 6px 0 0; font-size:14px; }
-.song-line{ display:flex; align-items:center; justify-content:space-between; gap:8px;
-           padding:8px 10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; margin-bottom:6px; }
-.song-title{ font-weight:700; color:#0f172a; }
-.song-meta{ font-size:12px; opacity:.85; }
-.small{ font-size:12px; opacity:.75; }
+.gray-drop { background:var(--drop); border:1px dashed #cbd5e1; padding:12px; border-radius:12px; min-height:64px; }
+.card { display:flex; align-items:center; justify-content:space-between; gap:8px;
+        padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; margin-bottom:8px; }
+.title { font-weight:700; color:var(--ink); }
+.meta { font-size:12px; color:var(--muted); }
+.chips { display:flex; flex-wrap:wrap; gap:8px; }
+.chip { display:inline-flex; align-items:center; gap:8px; background:var(--chip); color:var(--chipText);
+        padding:6px 10px; border-radius:999px; font-size:14px; }
+.small { font-size:12px; color:var(--muted); }
+.iconbtn { padding:6px 10px; border-radius:8px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; }
+.iconbtn:hover { background:#f8fafc; }
+hr { border:none; height:1px; background:#e5e7eb; margin:12px 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- helpers ----------
+# ===== helpers =====
 def mmss_to_seconds(mm, ss):
     try: m=int(mm)
     except: m=0
@@ -54,10 +61,6 @@ def seconds_to_mmss(t):
 
 def total_duration_seconds(ids):
     return sum(st.session_state["songs"][sid]["duration_s"] for sid in ids if sid in st.session_state["songs"])
-
-def label_for_pool(sid):
-    s=st.session_state["songs"][sid]
-    return f"{s['title']} ({seconds_to_mmss(s['duration_s'])})"
 
 def ensure_state():
     ss=st.session_state
@@ -109,62 +112,83 @@ if not st.session_state["seeded"] and not st.session_state["songs"]:
     seed_demo()
     st.session_state["seeded"] = True
 
-# ---------- Songpool ----------
+# ===== Songpool top =====
 st.subheader("🎒 Songpool")
-st.caption("Titel und Dauer. Mehrfachauswahl moeglich und in Sets verschieben.")
-pool_ids = st.session_state["pool"]
-pool_labels = [label_for_pool(sid) for sid in pool_ids]
-label_to_id = {label_for_pool(sid): sid for sid in pool_ids}
+st.caption("Titel und Dauer sichtbar. Karte per Klick in Sets verschieben.")
 
-# Show chips
-if pool_labels:
-    st.markdown(" ".join([f"<span class='chip'>{l}</span>" for l in pool_labels]), unsafe_allow_html=True)
-else:
-    st.caption("Der Songpool ist leer.")
-
-# Quick multi add from pool
-if pool_labels:
+if st.session_state["pool"]:
+    # bulk add
     c1,c2,c3 = st.columns([3,2,1])
+    pool_labels = [f"{st.session_state['songs'][sid]['title']} ({seconds_to_mmss(st.session_state['songs'][sid]['duration_s'])})" for sid in st.session_state["pool"]]
+    lab_to_id = {lab:sid for lab,sid in zip(pool_labels, st.session_state["pool"])}
     with c1:
-        picks = st.multiselect("Song auswaehlen", pool_labels, default=[])
+        picks = st.multiselect("Mehrfachauswahl", pool_labels, default=[])
     with c2:
         dest = st.selectbox("Ziel Set", [f"Set {i+1}" for i in range(len(st.session_state['sets']))])
     with c3:
         if st.button("Hinzufuegen"):
-            idx = int(dest.split(" ")[1]) - 1
+            idx = int(dest.split(" ")[1])-1
             for lab in picks:
-                sid = label_to_id[lab]
+                sid = lab_to_id[lab]
                 if sid in st.session_state["pool"]:
                     st.session_state["pool"].remove(sid)
                 st.session_state["sets"][idx].append(sid)
             st.success("Songs verschoben.")
 
-# ---------- Sets ----------
-st.subheader("🧩 Sets")
-count = st.selectbox("Anzahl Sets", [1,2,3,4,5], index=len(st.session_state["sets"])-1)
-if count != len(st.session_state["sets"]):
-    old = st.session_state["sets"]
-    st.session_state["sets"] = old + [[] for _ in range(count-len(old))] if count>len(old) else old[:count]
+    st.write("")
+    # cards view
+    for sid in list(st.session_state["pool"]):
+        s = st.session_state["songs"][sid]
+        c1,c2 = st.columns([6,3])
+        with c1:
+            st.markdown(f"<div class='card'><span class='title'>{s['title']}</span> <span class='meta'>({seconds_to_mmss(s['duration_s'])})</span></div>", unsafe_allow_html=True)
+        with c2:
+            subc1, subc2 = st.columns([2,1])
+            with subc1:
+                target = st.selectbox("Zu Set", [f"Set {i+1}" for i in range(len(st.session_state['sets']))], key=f"pool_target_{sid}")
+            with subc2:
+                if st.button("➜", key=f"pool_add_{sid}"):
+                    idx = int(target.split(" ")[1])-1
+                    st.session_state["pool"].remove(sid)
+                    st.session_state["sets"][idx].append(sid)
+                    st.experimental_rerun()
+else:
+    st.caption("Der Songpool ist leer.")
 
+st.write("")
+st.write("---")
+
+# ===== Sets =====
+st.subheader("🧩 Sets")
+ctrl1, ctrl2 = st.columns([2,2])
+with ctrl1:
+    count = st.selectbox("Anzahl Sets", [1,2,3,4,5], index=len(st.session_state["sets"])-1)
+    if count != len(st.session_state["sets"]):
+        old = st.session_state["sets"]
+        st.session_state["sets"] = old + [[] for _ in range(count-len(old))] if count>len(old) else old[:count]
+
+# render sets
 for i in range(len(st.session_state["sets"])):
     ids = st.session_state["sets"][i]
-    st.markdown(f"**Set {i+1}** — Dauer {seconds_to_mmss(total_duration_seconds(ids))}")
+    st.markdown(f"**Set {i+1}**  Dauer {seconds_to_mmss(total_duration_seconds(ids))}")
     st.markdown("<div class='gray-drop'>", unsafe_allow_html=True)
+
+    # reorder inside set
+    if ids and HAS_SORTABLES:
+        labs = [f"{st.session_state['songs'][sid]['title']} ({seconds_to_mmss(st.session_state['songs'][sid]['duration_s'])})" for sid in ids]
+        new_labs = sortable(labs, direction="vertical", key=f"sort_set_{i}")
+        inv = {lab:sid for lab,sid in zip(labs, ids)}
+        st.session_state["sets"][i] = [inv[l] for l in new_labs]
+
+    # rows with details and return to pool button
     if ids:
-        # in-set DnD
-        if HAS_SORTABLES:
-            labs = [label_for_pool(sid) for sid in ids]
-            new_labs = sortable(labs, direction="vertical", key=f"sort_set_{i}")
-            inv = {label_for_pool(sid): sid for sid in ids}
-            st.session_state["sets"][i] = [inv[l] for l in new_labs]
-        # rows
         for sid in st.session_state["sets"][i]:
             s = st.session_state["songs"][sid]
             c1,c2 = st.columns([8,2])
             with c1:
                 st.markdown(
-                    f"<div class='song-line'><span class='song-title'>{s['title']}</span> "
-                    f"<span class='song-meta'>({seconds_to_mmss(s['duration_s'])}) · {s.get('key','')} · {s.get('tempo','')}</span></div>",
+                    f"<div class='card'><span class='title'>{s['title']}</span> "
+                    f"<span class='meta'>({seconds_to_mmss(s['duration_s'])}) · {s.get('key','')} · {s.get('tempo','')}</span></div>",
                     unsafe_allow_html=True
                 )
             with c2:
@@ -175,10 +199,11 @@ for i in range(len(st.session_state["sets"])):
                     st.experimental_rerun()
     else:
         st.caption("Noch keine Songs in diesem Set")
+
     st.markdown("</div>", unsafe_allow_html=True)
     st.write("")
 
-# ---------- Add new song ----------
+# ===== Add new song =====
 st.subheader("➕ Neuen Song anlegen")
 with st.form("new_song", clear_on_submit=True):
     a,b,c,d,e = st.columns([3,3,1,1,2])
@@ -201,7 +226,7 @@ if ok and title.strip():
     st.session_state["pool"].append(sid)
     st.success(f"{title} gespeichert und in den Songpool gelegt.")
 
-# ---------- Export ----------
+# ===== Export =====
 def make_pdf_concert(concert_name: str):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
