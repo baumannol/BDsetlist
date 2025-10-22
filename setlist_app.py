@@ -2,24 +2,13 @@
 import json
 import streamlit as st
 
-# Try to import DnD component and read version
-HAS_DND = False
-DND_VERSION = "n/a"
+# Try optional DnD for in-list reordering
+HAS_SORTABLES = False
 try:
-    from importlib.metadata import version as _v
+    from streamlit_sortables import sort_items as sortable
+    HAS_SORTABLES = True
 except Exception:
-    _v = None
-
-try:
-    from streamlit_sortables import sort_items as sortable  # okld/streamlit-sortables
-    HAS_DND = True
-    if _v:
-        try:
-            DND_VERSION = _v("streamlit-sortables")
-        except Exception:
-            DND_VERSION = "unknown"
-except Exception:
-    HAS_DND = False
+    HAS_SORTABLES = False
 
 # PDF export
 try:
@@ -41,6 +30,7 @@ st.markdown("""
            padding:8px 10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; margin-bottom:6px; }
 .song-title{ font-weight:700; color:#0f172a; }
 .song-meta{ font-size:12px; opacity:.85; }
+.small{ font-size:12px; opacity:.75; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -119,40 +109,35 @@ if not st.session_state["seeded"] and not st.session_state["songs"]:
     seed_demo()
     st.session_state["seeded"] = True
 
-# ---------- Debug panel ----------
-with st.expander("🔧 Debug", expanded=False):
-    st.write({"HAS_DND": HAS_DND, "sortables_version": DND_VERSION})
-    st.write({"pool_count": len(st.session_state["pool"]), "set_counts": [len(s) for s in st.session_state["sets"]]})
-    if st.button("Demo neu befuellen"):
-        st.session_state["songs"].clear()
-        st.session_state["pool"].clear()
-        st.session_state["sets"] = [[],[]]
-        st.session_state["next_song_id"] = 1
-        seed_demo()
-        st.success("Demo Songs geladen.")
-
-# ---------- Songpool (with fallback controls) ----------
+# ---------- Songpool ----------
 st.subheader("🎒 Songpool")
-st.caption("Ziehe Songs in ein Set. Anzeigen: Titel und Dauer.")
-
-id_to_label = {sid: label_for_pool(sid) for sid in st.session_state["songs"].keys()}
-pool_labels = [id_to_label[sid] for sid in st.session_state["pool"]]
-
-try:
-    if HAS_DND:
-        pool_new = sortable(pool_labels, direction="vertical", key="pool", group="songs")
-    else:
-        pool_new = pool_labels
-except TypeError:
-    # group unsupported -> fallback to non-group mode
-    pool_new = pool_labels
-    HAS_DND = False
+st.caption("Titel und Dauer. Mehrfachauswahl moeglich und in Sets verschieben.")
+pool_ids = st.session_state["pool"]
+pool_labels = [label_for_pool(sid) for sid in pool_ids]
+label_to_id = {label_for_pool(sid): sid for sid in pool_ids}
 
 # Show chips
-if pool_new:
-    st.markdown(" ".join([f"<span class='chip'>{l}</span>" for l in pool_new]), unsafe_allow_html=True)
+if pool_labels:
+    st.markdown(" ".join([f"<span class='chip'>{l}</span>" for l in pool_labels]), unsafe_allow_html=True)
 else:
     st.caption("Der Songpool ist leer.")
+
+# Quick multi add from pool
+if pool_labels:
+    c1,c2,c3 = st.columns([3,2,1])
+    with c1:
+        picks = st.multiselect("Song auswaehlen", pool_labels, default=[])
+    with c2:
+        dest = st.selectbox("Ziel Set", [f"Set {i+1}" for i in range(len(st.session_state['sets']))])
+    with c3:
+        if st.button("Hinzufuegen"):
+            idx = int(dest.split(" ")[1]) - 1
+            for lab in picks:
+                sid = label_to_id[lab]
+                if sid in st.session_state["pool"]:
+                    st.session_state["pool"].remove(sid)
+                st.session_state["sets"][idx].append(sid)
+            st.success("Songs verschoben.")
 
 # ---------- Sets ----------
 st.subheader("🧩 Sets")
@@ -161,49 +146,37 @@ if count != len(st.session_state["sets"]):
     old = st.session_state["sets"]
     st.session_state["sets"] = old + [[] for _ in range(count-len(old))] if count>len(old) else old[:count]
 
-# prepare labels per set
-set_labels = [[id_to_label[sid] for sid in s] for s in st.session_state["sets"]]
-
-new_set_labels = []
-cols = st.columns(len(st.session_state["sets"])) if st.session_state["sets"] else []
-for i,c in enumerate(cols):
-    with c:
-        st.markdown(f"<div class='gray-drop'>Set {i+1}</div>", unsafe_allow_html=True)
-        try:
-            if HAS_DND:
-                new_labels = sortable(set_labels[i], direction="vertical", key=f"set_{i}", group="songs")
-            else:
-                new_labels = set_labels[i]
-        except TypeError:
-            # group unsupported
-            new_labels = set_labels[i]
-            HAS_DND = False
-        new_set_labels.append(new_labels)
-
-# Manual add control (fallback for cross-list)
-if not HAS_DND:
-    st.markdown("**Song aus Pool zu Set hinzufuegen**")
-    if st.session_state["pool"]:
-        c1,c2,c3 = st.columns([3,2,1])
-        with c1: pick = st.selectbox("Song", [id_to_label[sid] for sid in st.session_state["pool"]], key="pick_add")
-        with c2: dest = st.selectbox("Set", [f"Set {i+1}" for i in range(len(st.session_state["sets"]))], key="pick_dest")
-        with c3:
-            if st.button("Hinzufuegen"):
-                label_to_id = {v:k for k,v in id_to_label.items()}
-                sid = label_to_id[pick]
-                idx = int(dest.split(" ")[1])-1
-                if sid in st.session_state["pool"]:
-                    st.session_state["pool"].remove(sid)
-                st.session_state["sets"][idx].append(sid)
-                st.success("Song verschoben.")
-
-# Recompute IDs from labels
-label_to_id = {v:k for k,v in id_to_label.items()}
-new_pool_ids = [label_to_id[l] for l in pool_new if l in label_to_id]
-new_sets_ids = [[label_to_id[l] for l in labs if l in label_to_id] for labs in new_set_labels]
-
-st.session_state["pool"] = new_pool_ids
-st.session_state["sets"] = new_sets_ids
+for i in range(len(st.session_state["sets"])):
+    ids = st.session_state["sets"][i]
+    st.markdown(f"**Set {i+1}** — Dauer {seconds_to_mmss(total_duration_seconds(ids))}")
+    st.markdown("<div class='gray-drop'>", unsafe_allow_html=True)
+    if ids:
+        # in-set DnD
+        if HAS_SORTABLES:
+            labs = [label_for_pool(sid) for sid in ids]
+            new_labs = sortable(labs, direction="vertical", key=f"sort_set_{i}")
+            inv = {label_for_pool(sid): sid for sid in ids}
+            st.session_state["sets"][i] = [inv[l] for l in new_labs]
+        # rows
+        for sid in st.session_state["sets"][i]:
+            s = st.session_state["songs"][sid]
+            c1,c2 = st.columns([8,2])
+            with c1:
+                st.markdown(
+                    f"<div class='song-line'><span class='song-title'>{s['title']}</span> "
+                    f"<span class='song-meta'>({seconds_to_mmss(s['duration_s'])}) · {s.get('key','')} · {s.get('tempo','')}</span></div>",
+                    unsafe_allow_html=True
+                )
+            with c2:
+                if st.button("⇤ Pool", key=f"back_{i}_{sid}"):
+                    st.session_state["sets"][i].remove(sid)
+                    if sid not in st.session_state["pool"]:
+                        st.session_state["pool"].append(sid)
+                    st.experimental_rerun()
+    else:
+        st.caption("Noch keine Songs in diesem Set")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.write("")
 
 # ---------- Add new song ----------
 st.subheader("➕ Neuen Song anlegen")
@@ -227,18 +200,6 @@ if ok and title.strip():
     }
     st.session_state["pool"].append(sid)
     st.success(f"{title} gespeichert und in den Songpool gelegt.")
-
-# ---------- Details below ----------
-st.markdown("### Aktuelle Sets (Details)")
-for i, ids in enumerate(st.session_state["sets"]):
-    st.markdown(f"**Set {i+1}** — Dauer {seconds_to_mmss(total_duration_seconds(ids))}")
-    for sid in ids:
-        s = st.session_state["songs"][sid]
-        st.markdown(
-            f"<div class='song-line'><span class='song-title'>{s['title']}</span>"
-            f"<span class='song-meta'>({seconds_to_mmss(s['duration_s'])}) · {s.get('key','')} · {s.get('tempo','')}</span></div>",
-            unsafe_allow_html=True
-        )
 
 # ---------- Export ----------
 def make_pdf_concert(concert_name: str):
@@ -282,7 +243,7 @@ def make_pdf_suisa(concert_name: str):
             pdf.cell(80,7,s.get("artist",""),0,1)
     return pdf.output(dest="S").encode("latin1","replace")
 
-st.markdown("### 📄 Export")
+st.subheader("📄 Export")
 c1,c2 = st.columns(2)
 with c1:
     if HAS_PDF:
