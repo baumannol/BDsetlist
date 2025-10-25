@@ -185,17 +185,15 @@ if choice != current_n:
     if choice > current_n:
         st.session_state["sets"].extend([[] for _ in range(choice - current_n)])
     else:
-        # zu viele Sets werden entfernt, deren Songs gehen zurück in den Pool
         removed = st.session_state["sets"][choice:]
         back_ids = [sid for sub in removed for sid in sub]
-        # Pool erweitern ohne Duplikate
         existing = set(st.session_state["pool"])
         for sid in back_ids:
             if sid not in existing:
                 st.session_state["pool"].append(sid)
                 existing.add(sid)
         st.session_state["sets"] = st.session_state["sets"][:choice]
-    st.experimental_rerun()
+    st.rerun()
 
 # ========== Pool Mehrfachauswahl ==========
 st.subheader("Repertoire")
@@ -214,7 +212,7 @@ if pool_labels:
             idx = int(dest.split(" ")[1]) - 1
             ids = [label_to_id[lab] for lab in picks]
             add_to_set(ids, idx, insert_end=True)
-            st.experimental_rerun()
+            st.rerun()
 else:
     st.caption("Der Pool ist leer.")
 
@@ -234,16 +232,16 @@ for i in range(len(st.session_state["sets"])):
                 st.write(f"{s['title']} ({seconds_to_mmss(s['duration_s'])})")
             with c2:
                 if st.button("↑", key=f"up_{i}_{sid}"):
-                    move_within_set(i, sid, "up"); st.experimental_rerun()
+                    move_within_set(i, sid, "up"); st.rerun()
             with c3:
                 if st.button("↓", key=f"down_{i}_{sid}"):
-                    move_within_set(i, sid, "down"); st.experimental_rerun()
+                    move_within_set(i, sid, "down"); st.rerun()
             with c4:
                 if st.button("Entfernen", key=f"rm_{i}_{sid}"):
                     st.session_state["sets"][i].remove(sid)
                     if sid not in st.session_state["pool"]:
                         st.session_state["pool"].append(sid)
-                    st.experimental_rerun()
+                    st.rerun()
     else:
         st.caption("Noch keine Songs in diesem Set")
     st.write("")
