@@ -11,17 +11,23 @@ except Exception:
 st.set_page_config(page_title="Setlist", layout="wide")
 st.title("🎼 Setlist")
 
-# ===== Styles (compact + alternating rows) =====
+# ===== Styles (inspired by Gagenrechner look) =====
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Space+Mono&display=swap" rel="stylesheet">
 <style>
-:root { --ink:#0f172a; --muted:#475569; --bg:#ffffff; --bgAlt:#f8fafc; }
-.block { padding:6px 10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }
-.small { font-size:12px; color:var(--muted); }
-.row { display:grid; grid-template-columns: 1fr 90px 80px 90px 90px; align-items:center; gap:8px; padding:6px 8px; border-radius:8px; }
+:root { --ink:#0f172a; --muted:#475569; --bg:#ffffff; --bgAlt:#f8fafc; --brand:#004D59; }
+html, body, [class*="css"]  { font-family: 'Space Mono', monospace; font-size: 15px; }
+h1,h2,h3,h4,h5, .stButton>button { font-family: 'Montserrat', sans-serif; font-weight:700; }
+.stButton>button { background-color: var(--brand); color:#fff; border:none; border-radius:12px; padding:8px 16px; }
+.stButton>button:hover { background-color:#0d6b7a; }
+label, .stMarkdown, .stRadio, .stSelectbox, .stMultiSelect { font-size: 15px; }
+.small { font-size: 13px; color:var(--muted); }
+.block { padding:10px 12px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; }
+.row { display:grid; grid-template-columns: 1fr 90px 90px 90px; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; }
 .row.even { background: var(--bgAlt); }
 .row.odd  { background: var(--bg); }
-.btn { padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; }
-.stButton>button { padding:6px 12px; border-radius:8px; }
+.actions { display:flex; gap:6px; }
+.iconbtn { padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -110,11 +116,8 @@ def move_within_set(set_idx, sid, direction):
         ids[pos+1], ids[pos] = ids[pos], ids[pos+1]
 
 def pdf_bytes(pdf):
-    """Compatible bytes for Streamlit download across fpdf2 versions."""
     out = pdf.output(dest="S")
-    if isinstance(out, (bytes, bytearray)):
-        return bytes(out)
-    return out.encode("latin1", "replace")
+    return out if isinstance(out, (bytes, bytearray)) else out.encode("latin1", "replace")
 
 def make_pdf_concert(concert_name: str):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -164,14 +167,16 @@ if not st.session_state["seeded"] and not st.session_state["songs"]:
     seed_demo()
     st.session_state["seeded"] = True
 
-# ===== New song (compact, one row) =====
+# ===== New song (one row incl. Tonart & Tempo) =====
 with st.expander("Neuen Song anlegen", expanded=False):
     with st.form("new_song", clear_on_submit=True):
-        a,b,c,d = st.columns([4,4,1,1])
+        a,b,c,d,e,f = st.columns([4,4,1,1,1,1])
         title = a.text_input("Titel*", placeholder="z. B. Firework")
         artist = b.text_input("Interpret optional", placeholder="z. B. Katy Perry")
         mm = c.number_input("Minuten", 0, 59, 3)
         ss = d.number_input("Sekunden", 0, 59, 30, 5)
+        key = e.text_input("Tonart", value="C-Dur")
+        tempo = f.text_input("Tempo", value="120")
         ok = st.form_submit_button("Speichern")
     if ok and title.strip():
         sid = st.session_state["next_song_id"]; st.session_state["next_song_id"] += 1
@@ -179,8 +184,8 @@ with st.expander("Neuen Song anlegen", expanded=False):
             "title": title.strip(),
             "artist": artist.strip(),
             "duration_s": mmss_to_seconds(mm, ss),
-            "key": "C-Dur",
-            "tempo": "120"
+            "key": key.strip() or "C-Dur",
+            "tempo": tempo.strip() or "120"
         }
         st.session_state["pool"].append(sid)
         st.success(f"{title} gespeichert und zum Pool hinzugefügt.")
@@ -202,14 +207,14 @@ if choice != current_n:
         st.session_state["sets"] = st.session_state["sets"][:choice]
     st.rerun()
 
-# ===== Pool multi-select (no dropdown) =====
+# ===== Pool =====
 st.subheader("Repertoire")
 pool_ids = list(st.session_state["pool"])
 pool_labels = [f"{st.session_state['songs'][sid]['title']} ({seconds_to_mmss(st.session_state['songs'][sid]['duration_s'])})" for sid in pool_ids]
 label_to_id = {lab:sid for lab,sid in zip(pool_labels, pool_ids)}
 
 if pool_labels:
-    c1,c2,c3 = st.columns([3,2,1])
+    c1,c2,c3 = st.columns([4,2,1])
     picks = c1.multiselect("Songs auswählen", pool_labels, default=[])
     dest = c2.selectbox("Ziel Set", [f"Set {i+1}" for i in range(len(st.session_state['sets']))])
     if c3.button("Hinzufügen"):
@@ -223,21 +228,22 @@ else:
 st.write("")
 st.divider()
 
-# ===== Sets (compact, alternating colors + key & tempo columns) =====
+# ===== Sets (alternating rows + columns) =====
 st.subheader("Sets")
 for i in range(len(st.session_state["sets"])):
     ids = st.session_state["sets"][i]
     st.markdown(f"**Set {i+1}** · Dauer {seconds_to_mmss(total_duration(ids))}")
     if ids:
+        # Header row
+        st.markdown(f"<div class='row odd'><b>Titel</b><b>Dauer</b><b>Tonart</b><b>Tempo</b></div>", unsafe_allow_html=True)
         for pos, sid in enumerate(ids):
             s = st.session_state["songs"][sid]
             bg_class = "even" if pos % 2 == 0 else "odd"
             st.markdown(f"<div class='row {bg_class}'><div>{s['title']}</div>"
                         f"<div class='small'>{seconds_to_mmss(s['duration_s'])}</div>"
                         f"<div class='small'>{s.get('key','')}</div>"
-                        f"<div class='small'>{s.get('tempo','')}</div>"
-                        f"<div></div></div>", unsafe_allow_html=True)
-            c1,c2,c3 = st.columns([0.1,0.1,0.2])
+                        f"<div class='small'>{s.get('tempo','')}</div></div>", unsafe_allow_html=True)
+            c1,c2,c3 = st.columns([0.1,0.1,0.3])
             if c1.button("↑", key=f"up_{i}_{sid}"):
                 move_within_set(i, sid, "up"); st.rerun()
             if c2.button("↓", key=f"down_{i}_{sid}"):
