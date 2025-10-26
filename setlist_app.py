@@ -1,7 +1,9 @@
 
+import io
+import csv
 import streamlit as st
 
-# PDF export
+# ===== PDF =====
 try:
     from fpdf import FPDF
     HAS_PDF = True
@@ -11,331 +13,347 @@ except Exception:
 st.set_page_config(page_title="Setlist", layout="wide")
 st.title("🎼 Setlist")
 
-# ===== Styles =====
-st.markdown("""
+# ===== Styles (Gagenrechner Look, kompakt) =====
+st.markdown('''
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Space+Mono&display=swap" rel="stylesheet">
 <style>
-:root { --ink:#0f172a; --muted:#475569; --bg:#ffffff; --bgAlt:#f8fafc; --brand:#004D59; --row:#ffffff; --rowAlt:#f6f7fb; }
-html, body, [class*="css"]  { font-family: 'Space Mono', monospace; font-size: 15px; }
-h1,h2,h3,h4,h5, .stButton>button { font-family: 'Montserrat', sans-serif; font-weight:700; }
-.stButton>button { background-color: var(--brand); color:#fff; border:none; border-radius:10px; padding:6px 12px; font-size:14px; }
-.stButton>button:hover { background-color:#0d6b7a; }
-label, .stMarkdown, .stRadio, .stSelectbox, .stMultiSelect { font-size: 15px; }
-.small { font-size: 13px; color:var(--muted); }
-.row { display:grid; grid-template-columns: 1fr 90px 80px 80px 140px; align-items:center; gap:6px; padding:6px 8px; border-radius:8px; }
-.row.even { background: var(--rowAlt); }
-.row.odd  { background: var(--row); }
-.duration { font-weight:700; font-size:14px; }
-.controls { display:flex; gap:6px; justify-content:flex-end; }
-.setbar { position: sticky; top: 0; z-index: 20; background: #ffffffd9; backdrop-filter: blur(4px);
-          border-bottom: 1px solid #e5e7eb; padding:6px 6px 10px 6px; margin-bottom: 8px; }
-@media (max-width: 640px){
-  .row { grid-template-columns: 1fr 70px 70px 70px 110px; gap:4px; padding:6px; }
-  .stButton>button { padding:6px 10px; font-size:13px; }
-}
+:root { --ink:#0f172a; --muted:#475569; --brand:#004D59; --brand2:#0d6b7a; --chip:#eef2f7; }
+html, body, [class*="css"]  { font-family:'Space Mono', monospace; font-size:16px; color:var(--ink); }
+h1,h2,h3,.stButton>button { font-family:'Montserrat', sans-serif; font-weight:700; }
+.stButton>button { background:var(--brand); color:#fff; border:none; border-radius:10px; padding:4px 10px; font-size:14px; }
+.stButton>button:hover { background:var(--brand2); }
+.small { font-size:14px; color:var(--muted); }
+.badge { padding:2px 8px; border-radius:6px; background:var(--chip); font-weight:700; }
+.rowhdr { font-weight:700; margin-top:6px; }
+.pill { display:inline-block; padding:8px 14px; border-radius:9999px; border:1px solid #cbd5e1; background:#e2e8f0; color:#0f172a; font-weight:700; }
+.pill.active { background:#004D59; border-color:#004D59; color:#fff; }
+.table-row { padding:6px 0; border-bottom:1px solid #f1f5f9; }
 </style>
-""", unsafe_allow_html=True)
+''', unsafe_allow_html=True)
 
 # ===== Helpers =====
-def mmss_to_seconds(mm, ss):
-    try: m = int(mm)
-    except: m = 0
-    try: s = int(ss)
-    except: s = 0
-    return max(0, m)*60 + max(0, s)
-
-def mmss_str_to_seconds(mmss: str):
-    if not mmss: return 0
-    p = str(mmss).strip().split(":")
-    if len(p) == 2: return mmss_to_seconds(p[0], p[1])
-    return 0
-
-def seconds_to_mmss(t):
-    m, s = divmod(max(0, int(t)), 60)
-    return f"{m:02d}:{s:02d}"
-
-def total_duration(ids):
-    return sum(st.session_state["songs"][sid]["duration_s"] for sid in ids if sid in st.session_state["songs"])
-
-def ensure_state():
-    ss = st.session_state
-    ss.setdefault("songs", {})
-    ss.setdefault("next_song_id", 1)
-    ss.setdefault("sets", [[], [], []])  # start with 3
-    ss.setdefault("pool", [])
-    ss.setdefault("seeded", False)
-    ss.setdefault("concert_name", "")
-    ss.setdefault("targets", [0,0,0])  # per-set target seconds
-    ss.setdefault("sel", {})  # selection state for batch actions
-
-def seed_demo():
-    SEED = [
-        {"title":"Alors, dont start the blinding lights","artist":"Dua Lipa, Stromae, The Weeknd","mmss":"05:26"},
-        {"title":"Avicii","artist":"Avicii","mmss":"04:10"},
-        {"title":"Carmabesque","artist":"Coldplay, Stromae, Bizet","mmss":"06:00"},
-        {"title":"Clandestino","artist":"Manu Chao","mmss":"03:16"},
-        {"title":"Dance Monkey","artist":"Tones and I","mmss":"04:09"},
-        {"title":"Die with a smile","artist":"Bruno Mars, Lady Gaga","mmss":"04:15"},
-        {"title":"Emergency Hip Hop","artist":"Diverse","mmss":"04:50"},
-        {"title":"Feeling Good","artist":"Anthony Newley, Leslie Bricusse","mmss":"04:16"},
-        {"title":"Fireflies","artist":"Owl City","mmss":"03:24"},
-        {"title":"Hip Hop Mix 2","artist":"Diverse","mmss":"06:12"},
-        {"title":"Hopes Stay As They Were","artist":"Harry Styles, Panic at the Disco, Justin Bieber","mmss":"05:16"},
-        {"title":"Komet / Monsun","artist":"Udo Lindenberg, Apache207, Tokio Hotel","mmss":"03:34"},
-        {"title":"Leave the door open","artist":"Silk Sonic","mmss":"04:08"},
-        {"title":"Lets Get Bad","artist":"J Lo, Billie Eilish","mmss":"05:05"},
-        {"title":"No Roots","artist":"Alice Merton","mmss":"03:36"},
-        {"title":"Oh Johnny","artist":"Jan Delay","mmss":""},
-        {"title":"Raw","artist":"Meute","mmss":"05:00"},
-        {"title":"Romano Hip Hop","artist":"Gipsy CZ","mmss":"02:30"},
-        {"title":"The Code","artist":"Nemo","mmss":"03:12"},
-        {"title":"Toxic Industry","artist":"Lil Nas, Britney Spears","mmss":"03:20"},
-        {"title":"Valerie","artist":"Mark Ronson, Amy Winehouse","mmss":""},
-        {"title":"Vreneli vo Mahala","artist":"Mahala Rai Banda, trad.","mmss":"03:49"}
-    ]
-    for s in SEED:
-        sid = st.session_state["next_song_id"]; st.session_state["next_song_id"] += 1
-        st.session_state["songs"][sid] = {
-            "title": s["title"],
-            "artist": s.get("artist", ""),
-            "duration_s": mmss_str_to_seconds(s.get("mmss", "")),
-            "key": "C-Dur",
-            "tempo": "120"
-        }
-        st.session_state["pool"].append(sid)
-
-def add_to_set(song_ids, set_idx):
-    if not song_ids: return
-    lst = st.session_state["sets"][set_idx]
-    to_add = [sid for sid in song_ids if sid in st.session_state["pool"]]
-    lst.extend(to_add)
-    for sid in to_add:
-        if sid in st.session_state["pool"]:
-            st.session_state["pool"].remove(sid)
-
-def move_within_set(set_idx, sid, direction):
-    ids = st.session_state["sets"][set_idx]
-    if sid not in ids: return
-    pos = ids.index(sid)
-    if direction == "up" and pos > 0:
-        ids[pos-1], ids[pos] = ids[pos], ids[pos-1]
-    if direction == "down" and pos < len(ids)-1:
-        ids[pos+1], ids[pos] = ids[pos], ids[pos+1]
-
 def latin1_safe(s: str) -> str:
-    if s is None: return ""
-    replacements = {"–":"-","—":"-","’":"'", "“":'"',"”":'"',"…":"..."}
-    for k,v in replacements.items(): s = s.replace(k,v)
-    return s.encode("latin-1", "replace").decode("latin-1")
+    if s is None:
+        return ""
+    rep = {"–":"-","—":"-","’":"'", "“":'"',"”":'"',"…":"..."}
+    for k,v in rep.items():
+        s = s.replace(k, v)
+    return s.encode("latin-1","replace").decode("latin-1")
 
 def pdf_bytes(pdf):
     out = pdf.output(dest="S")
-    return out if isinstance(out, (bytes, bytearray)) else out.encode("latin1", "replace")
+    if isinstance(out, bytearray):
+        return bytes(out)
+    if isinstance(out, str):
+        return out.encode("latin-1","replace")
+    return out  # bytes
 
-def make_pdf_concert(concert_name: str, set_names):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=12)
-    pdf.add_page()
-    pdf.set_font("Helvetica","B",18); pdf.cell(0,10, latin1_safe(f"Setliste {concert_name}"), ln=1)
-    for idx, ids in enumerate(st.session_state["sets"], start=1):
-        name = set_names[idx-1] if idx-1 < len(set_names) else f"Set {idx}"
-        pdf.set_font("Helvetica","B",13); pdf.cell(0,8, latin1_safe(name), ln=1)
-        pdf.set_font("Helvetica","B",11)
-        pdf.cell(10,7,"#",1,0,"C")
-        pdf.cell(115,7, latin1_safe("Titel"),1,0)
-        pdf.cell(20,7, latin1_safe("Dauer"),1,0,"C")
-        pdf.cell(20,7, latin1_safe("Tonart"),1,0,"C")
-        pdf.cell(20,7, latin1_safe("Tempo"),1,1,"C")
-        pdf.set_font("Helvetica","",11)
-        for pos, sid in enumerate(ids, start=1):
-            s = st.session_state["songs"][sid]
-            pdf.cell(10,7, str(pos),1,0,"C")
-            pdf.cell(115,7, latin1_safe(s["title"]),1,0)
-            pdf.cell(20,7, seconds_to_mmss(s["duration_s"]),1,0,"C")
-            pdf.cell(20,7, latin1_safe(s.get("key","")),1,0,"C")
-            pdf.cell(20,7, latin1_safe(s.get("tempo","")),1,1,"C")
-        pdf.set_font("Helvetica","B",11)
-        pdf.cell(145,7, latin1_safe("Set Dauer"),1,0,"R")
-        pdf.cell(40,7, seconds_to_mmss(total_duration(ids)),1,1,"C")
-        pdf.ln(3)
-    total = sum(total_duration(x) for x in st.session_state["sets"])
-    pdf.set_font("Helvetica","B",12); pdf.cell(145,8, latin1_safe("Gesamtdauer"),0,0,"R")
-    pdf.cell(40,8, seconds_to_mmss(total),0,1,"C")
-    return pdf_bytes(pdf)
+def seconds_to_mmss(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    m, s = divmod(seconds, 60)
+    return f"{m:02d}:{s:02d}"
 
-def make_pdf_suisa(concert_name: str, set_names):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.add_page()
-    pdf.set_font("Helvetica","B",18); pdf.cell(0,10, latin1_safe(f"SUISA Liste {concert_name}"), ln=1)
-    pdf.set_font("Helvetica","B",11)
-    pdf.cell(115,7, latin1_safe("Titel"),1,0)
-    pdf.cell(75,7, latin1_safe("Interpret"),1,1)
-    pdf.set_font("Helvetica","",11)
-    for ids in st.session_state["sets"]:
-        for sid in ids:
-            s = st.session_state["songs"][sid]
-            pdf.cell(115,7, latin1_safe(s["title"]),1,0)
-            pdf.cell(75,7, latin1_safe(s.get("artist","")),1,1)
-    return pdf_bytes(pdf)
+def mmss_to_seconds(mm: int, ss: int) -> int:
+    return max(0, int(mm))*60 + max(0, int(ss))
 
-# ===== Init =====
-ensure_state()
-if not st.session_state["seeded"] and not st.session_state["songs"]:
-    seed_demo()
-    st.session_state["seeded"] = True
+def total_duration(id_list):
+    return sum(st.session_state["songs"][sid]["duration_s"] for sid in id_list)
 
-# ===== New song =====
-with st.expander("Neuen Song anlegen", expanded=False):
-    with st.form("new_song", clear_on_submit=True):
-        a,b,c,d,e,f = st.columns([4,4,1,1,1,1])
-        title = a.text_input("Titel*", placeholder="z. B. Firework")
-        artist = b.text_input("Interpret optional", placeholder="z. B. Katy Perry")
-        mm = c.number_input("Minuten", 0, 59, 3)
-        ss = d.number_input("Sekunden", 0, 59, 30, 5)
-        key = e.text_input("Tonart", value="C-Dur")
-        tempo = f.text_input("Tempo", value="120")
-        ok = st.form_submit_button("Speichern")
-    if ok and title.strip():
-        sid = st.session_state["next_song_id"]; st.session_state["next_song_id"] += 1
-        st.session_state["songs"][sid] = {
-            "title": title.strip(),
-            "artist": artist.strip(),
-            "duration_s": mmss_to_seconds(mm, ss),
-            "key": key.strip() or "C-Dur",
-            "tempo": tempo.strip() or "120"
-        }
-        st.session_state["pool"].append(sid)
-        st.success(f"{title} gespeichert und zum Pool hinzugefügt.")
+# ===== State =====
+ss = st.session_state
+# Seed mit deiner Repertoire Basis (alphabetisch angezeigt, Reihenfolge hier egal)
+if "songs" not in ss:
+    ss["songs"] = {
+        1: {"title": "Alors, dont start the blinding lights", "duration_s": 326, "key": "", "tempo": "", "artist": "Dua Lipa, Stromae, The Weeknd"},
+        2: {"title": "Avicii", "duration_s": 250, "key": "", "tempo": "", "artist": "Avicii"},
+        3: {"title": "Carmabesque", "duration_s": 360, "key": "", "tempo": "", "artist": "Coldplay, Stromae, Bizet"},
+        4: {"title": "Clandestino", "duration_s": 196, "key": "", "tempo": "", "artist": "Manu Chao"},
+        5: {"title": "Dance Monkey", "duration_s": 249, "key": "", "tempo": "", "artist": "Tones and I"},
+        6: {"title": "Die with a smile", "duration_s": 255, "key": "", "tempo": "", "artist": "Bruno Mars, Lady Gaga"},
+        7: {"title": "Emergency Hip Hop", "duration_s": 290, "key": "", "tempo": "", "artist": "Diverse"},
+        8: {"title": "Feeling Good", "duration_s": 256, "key": "", "tempo": "", "artist": "Anthony Newley, Leslie Bricusse"},
+        9: {"title": "Fireflies", "duration_s": 204, "key": "", "tempo": "", "artist": "Owl City"},
+        10: {"title": "Hip Hop Mix 2", "duration_s": 372, "key": "", "tempo": "", "artist": "Diverse"},
+        11: {"title": "Hopes Stay As They Were", "duration_s": 316, "key": "", "tempo": "", "artist": "Harry Styles, Panic at the Disco, Justin Bieber"},
+        12: {"title": "Komet / Monsun", "duration_s": 214, "key": "", "tempo": "", "artist": "Udo Lindenberg, Apache207, Tokio Hotel"},
+        13: {"title": "Leave the door open", "duration_s": 248, "key": "", "tempo": "", "artist": "Silk Sonic"},
+        14: {"title": "Lets Get Bad", "duration_s": 305, "key": "", "tempo": "", "artist": "J Lo, Billie Eilish"},
+        15: {"title": "No Roots", "duration_s": 216, "key": "", "tempo": "", "artist": "Alice Merton"},
+        16: {"title": "Oh Johnny", "duration_s": 0, "key": "", "tempo": "", "artist": "Jan Delay"},
+        17: {"title": "Raw", "duration_s": 300, "key": "", "tempo": "", "artist": "Meute"},
+        18: {"title": "Romano Hip Hop", "duration_s": 150, "key": "", "tempo": "", "artist": "Gipsy CZ"},
+        19: {"title": "The Code", "duration_s": 192, "key": "", "tempo": "", "artist": "Nemo"},
+        20: {"title": "Toxic Industry", "duration_s": 200, "key": "", "tempo": "", "artist": "Lil Nas, Britney Spears"},
+        21: {"title": "Valerie", "duration_s": 0, "key": "", "tempo": "", "artist": "Mark Ronson, Amy Winehouse"},
+        22: {"title": "Vreneli vo Mahala", "duration_s": 229, "key": "", "tempo": "", "artist": "Mahala Rai Banda, trad."},
+        23: {"title": "Uptown Funk", "duration_s": 270, "key": "", "tempo": "", "artist": "Mark Ronson ft. Bruno Mars"},
+        24: {"title": "Shut Up and Dance", "duration_s": 210, "key": "", "tempo": "", "artist": "WALK THE MOON"},
+        25: {"title": "Sweet Caroline", "duration_s": 205, "key": "", "tempo": "", "artist": "Neil Diamond"},
+    }
+    ss["next_id"] = max(ss["songs"].keys()) + 1
+    ss["pool"] = list(ss["songs"].keys())
+    ss["sets"] = {0: [], 1: [], 2: []}
+    ss["targets"] = [0, 0, 0]
+    ss["sel"] = {}
+    ss["num_sets"] = 3
 
-# ===== Anzahl Sets =====
+# ===== Neuer Song =====
+with st.expander("➕ Neuen Song anlegen", expanded=False):
+    c1, c2, c3, c4, c5, c6 = st.columns([3, 1, 1, 2, 1.2, 1.2])
+    with c1:
+        n_title = st.text_input("Titel", key="new_title")
+    with c2:
+        n_min = st.number_input("Minuten", 0, 99, 3, key="new_min")
+    with c3:
+        n_sec = st.number_input("Sekunden", 0, 59, 0, key="new_sec")
+    with c4:
+        n_artist = st.text_input("Interpret (optional)", key="new_artist")
+    with c5:
+        n_tempo = st.text_input("Tempo", value="", key="new_tempo")
+    with c6:
+        n_key = st.text_input("Tonart", value="", key="new_key")
+    if st.button("Hinzufügen", key="btn_add_song"):
+        if n_title:
+            sid = ss["next_id"]; ss["next_id"] += 1
+            ss["songs"][sid] = {
+                "title": n_title.strip(),
+                "duration_s": mmss_to_seconds(n_min, n_sec),
+                "key": n_key.strip(),
+                "tempo": n_tempo.strip(),
+                "artist": n_artist.strip(),
+            }
+            ss["pool"].append(sid)
+            st.success(f"Song „{n_title}“ hinzugefügt.")
+
+# ===== Anzahl Sets – farbige Auswahlpillen =====
 st.subheader("Anzahl Sets")
-current_n = len(st.session_state["sets"])
-choice = st.radio("Wähle Anzahl Sets", [1,2,3], index=[1,2,3].index(current_n if current_n in [1,2,3] else 3), horizontal=True)
-if choice != current_n:
-    if choice > current_n:
-        st.session_state["sets"].extend([[] for _ in range(choice-current_n)])
-        st.session_state["targets"].extend([0 for _ in range(choice-current_n)])
-    else:
-        removed = st.session_state["sets"][choice:]
-        back_ids = [sid for sub in removed for sid in sub]
-        existing = set(st.session_state["pool"])
-        for sid in back_ids:
-            if sid not in existing:
-                st.session_state["pool"].append(sid); existing.add(sid)
-        st.session_state["sets"] = st.session_state["sets"][:choice]
-        st.session_state["targets"] = st.session_state["targets"][:choice]
-    st.rerun()
+cbtn1, cbtn2, cbtn3 = st.columns(3)
+def set_pill(col, label, n):
+    active = (ss["num_sets"] == n)
+    with col:
+        # Action Button (funktional) + visuelle Pill (optisch)
+        if st.button(label, key=f"choose_{n}", type="secondary"):
+            ss["num_sets"] = n
+        st.markdown(f"<span class='pill {'active' if active else ''}'>{label}</span>", unsafe_allow_html=True)
+set_pill(cbtn1, "1 Set", 1)
+set_pill(cbtn2, "2 Sets", 2)
+set_pill(cbtn3, "3 Sets", 3)
+num_sets = ss["num_sets"]
 
-# ===== Compact sticky toolbar =====
-st.markdown("<div class='setbar'></div>", unsafe_allow_html=True)
-tb = st.container()
-with tb:
-    c1,c2,c3 = st.columns([4,2,1])
-    pool_ids = list(st.session_state["pool"])
-    pool_labels = [f"{st.session_state['songs'][sid]['title']} ({seconds_to_mmss(st.session_state['songs'][sid]['duration_s'])})" for sid in pool_ids]
-    label_to_id = {lab:sid for lab,sid in zip(pool_labels, pool_ids)}
-    picks = c1.multiselect("Songs auswählen", pool_labels, default=[])
-    dest = c2.selectbox("Ziel Set", [f"Set {i+1}" for i in range(len(st.session_state['sets']))])
-    if c3.button("Hinzufügen"):
-        idx = int(dest.split(" ")[1]) - 1
-        ids = [label_to_id[lab] for lab in picks]
-        add_to_set(ids, idx)
-        st.rerun()
+# ===== Repertoire (alphabetisch) =====
+st.subheader("Repertoire")
+rc1, rc2, rc3 = st.columns([4, 2, 1])
+pool_sorted = sorted(ss["pool"], key=lambda sid: ss["songs"][sid]["title"].casefold())
 
-# ===== Sets with targets, progress, batch actions =====
+def pool_label(sid: int) -> str:
+    s = ss["songs"][sid]
+    return f"{s['title']} ({seconds_to_mmss(s['duration_s'])})"
+
+with rc1:
+    picks = st.multiselect("Songs auswählen", options=pool_sorted, format_func=pool_label, key="pick_from_pool")
+with rc2:
+    dest = st.selectbox("Ziel Set", [f"Set {i+1}" for i in range(num_sets)], key="dest_set")
+with rc3:
+    if st.button("Hinzufügen", key="btn_add_to_set"):
+        if picks:
+            idx = int(dest.split()[-1]) - 1
+            ss["sets"][idx].extend(picks)
+            for sid in picks:
+                if sid in ss["pool"]:
+                    ss["pool"].remove(sid)
+            st.rerun()
+
+# ===== Sets =====
 st.subheader("Sets")
-set_names = [f"Set {i+1}" for i in range(len(st.session_state["sets"]))]
+set_names = [f"Set {i+1}" for i in range(num_sets)]
 
-for i in range(len(st.session_state["sets"])):
-    ids = st.session_state["sets"][i]
-    # target controls
-    tcol1,tcol2,tcol3 = st.columns([2,2,6])
-    with tcol1:
+for i in range(num_sets):
+    ids = ss["sets"][i]
+
+    # Kopf: Name + Ziel Minuten + Fortschritt
+    tc1, tc2, tc3 = st.columns([2, 3, 5])
+    with tc1:
         st.markdown(f"**{set_names[i]}**")
-    with tcol2:
-        tm = st.text_input(f"Ziel-Länge (MM:SS) · Set {i+1}", value=seconds_to_mmss(st.session_state['targets'][i]) if st.session_state['targets'][i] else "", key=f"t_{i}")
-        target_s = 0
-        if tm and ":" in tm:
-            mm, ss = tm.split(":",1)
-            try: target_s = int(mm)*60 + int(ss)
-            except: target_s = 0
-        st.session_state["targets"][i] = target_s
-    with tcol3:
+    with tc2:
+        mins = st.number_input(f"Ziel Minuten · {set_names[i]}", min_value=0, max_value=180, step=1,
+                               value=int(ss['targets'][i] // 60), key=f"target_min_{i}")
+        ss["targets"][i] = mins * 60
+    with tc3:
         cur = total_duration(ids)
-        tgt = st.session_state["targets"][i] or 0
-        pct = 0 if tgt==0 else min(1.0, cur/float(tgt))
-        bar = int(pct*100)
-        color = "#16a34a" if tgt==0 or cur<=tgt else ("#f97316" if cur<=tgt+60 else "#dc2626")
-        st.markdown(f"<div style='height:10px;border-radius:8px;background:#e5e7eb;overflow:hidden;'><div style='width:{bar}%;height:10px;background:{color};'></div></div>", unsafe_allow_html=True)
-        st.caption(f"Aktuell {seconds_to_mmss(cur)}{(' / Ziel ' + seconds_to_mmss(tgt)) if tgt else ''}")
-    # header row
-    st.markdown(f"<div class='row odd'><b>Titel</b><b class='duration'>Dauer</b><b>Tonart</b><b>Tempo</b><b class='small'>Aktionen</b></div>", unsafe_allow_html=True)
+        tgt = ss["targets"][i]
+        delta = cur - tgt
+        if tgt == 0:
+            color = "#16a34a"
+        elif delta > 600:
+            color = "#dc2626"  # rot ab +10 min
+        elif delta > 60:
+            color = "#f97316"  # orange ab +1 min
+        else:
+            color = "#16a34a"
+        pct = 0 if tgt == 0 else min(1.0, cur / float(tgt))
+        bar = int(pct * 100)
+        st.markdown(f"<div style='height:10px;border-radius:10px;background:#e5e7eb;overflow:hidden;'><div style='width:{bar}%;height:10px;background:{color};'></div></div>", unsafe_allow_html=True)
+        suffix = f" / Ziel {mins:02d}:00" if tgt else ""
+        st.caption(f"Aktuell {seconds_to_mmss(cur)}{suffix}")
 
-    selected_here = []
+    # Kopfzeile
+    st.markdown("<div class='rowhdr'>Titel · Dauer · Tonart · Tempo</div>", unsafe_allow_html=True)
+
     if ids:
         for pos, sid in enumerate(ids):
-            s = st.session_state["songs"][sid]
-            bg_class = "even" if pos % 2 == 0 else "odd"
-            st.markdown(f"<div class='row {bg_class}'><div>{latin1_safe(s['title'])}</div>"
-                        f"<div class='duration'>{seconds_to_mmss(s['duration_s'])}</div>"
-                        f"<div class='small'>{latin1_safe(s.get('key',''))}</div>"
-                        f"<div class='small'>{latin1_safe(s.get('tempo',''))}</div>"
-                        f"<div class='controls'></div></div>", unsafe_allow_html=True)
-            cc1,cc2,cc3,cc4 = st.columns([0.08,0.08,0.22,0.12])
-            if cc1.button("↑", key=f"up_{i}_{sid}"): move_within_set(i, sid, "up"); st.rerun()
-            if cc2.button("↓", key=f"down_{i}_{sid}"): move_within_set(i, sid, "down"); st.rerun()
-            if cc3.button("Entfernen", key=f"rm_{i}_{sid}"):
-                st.session_state["sets"][i].remove(sid)
-                if sid not in st.session_state["pool"]: st.session_state["pool"].append(sid)
-                st.rerun()
-            sel_key = (i, sid)
-            checked = cc4.checkbox("Ausw.", key=f"sel_{i}_{sid}", value=st.session_state["sel"].get(sel_key, False))
-            st.session_state["sel"][sel_key] = checked
-            if checked: selected_here.append(sid)
+            s = ss["songs"][sid]
+            col_t, col_d, col_k, col_tp, col_act, col_sel = st.columns([6, 1.2, 1.2, 1.2, 1.6, 0.8])
+            with col_t:
+                st.markdown(latin1_safe(s["title"]))
+            with col_d:
+                st.markdown(f"<span class='badge'>{seconds_to_mmss(s['duration_s'])}</span>", unsafe_allow_html=True)
+            with col_k:
+                st.markdown(f"<span class='small'>{latin1_safe(s.get('key','')) or '-'}</span>", unsafe_allow_html=True)
+            with col_tp:
+                st.markdown(f"<span class='small'>{latin1_safe(s.get('tempo','')) or '-'}</span>", unsafe_allow_html=True)
+            with col_act:
+                b1, b2, b3 = st.columns([1, 1, 2])
+                if b1.button("↑", key=f"up_{i}_{sid}"):
+                    if pos > 0:
+                        ids[pos-1], ids[pos] = ids[pos], ids[pos-1]
+                        st.rerun()
+                if b2.button("↓", key=f"down_{i}_{sid}"):
+                    if pos < len(ids)-1:
+                        ids[pos+1], ids[pos] = ids[pos], ids[pos+1]
+                        st.rerun()
+                if b3.button("Entfernen", key=f"rm_{i}_{sid}"):
+                    ids.remove(sid)
+                    if sid not in ss["pool"]:
+                        ss["pool"].append(sid)
+                    st.rerun()
+            with col_sel:
+                sel_key = (i, sid)
+                checked = st.checkbox("Ausw.", key=f"sel_{i}_{sid}", value=ss["sel"].get(sel_key, False))
+                ss["sel"][sel_key] = checked
     else:
         st.caption("Noch keine Songs in diesem Set")
 
-    # batch actions
-    b1,b2,b3 = st.columns([0.18,0.18,0.64])
-    if b1.button("Ausgewählte → anderes Set", key=f"mv_{i}") and selected_here:
-        dests = [j for j in range(len(st.session_state["sets"])) if j != i]
-        j = dests[0] if dests else None
-        if j is not None:
-            for sid in selected_here:
-                if sid in st.session_state["sets"][i]:
-                    st.session_state["sets"][i].remove(sid)
-                    st.session_state["sets"][j].append(sid)
-                    st.session_state["sel"][(i,sid)] = False
-        st.rerun()
-    if b2.button("Ausgewählte → Pool", key=f"pool_{i}") and selected_here:
-        for sid in selected_here:
-            if sid in st.session_state["sets"][i]:
-                st.session_state["sets"][i].remove(sid)
-                if sid not in st.session_state["pool"]: st.session_state["pool"].append(sid)
-                st.session_state["sel"][(i,sid)] = False
-        st.rerun()
-
-    st.write("")
+    # Batch Aktionen
+    ba1, ba_sel, ba2 = st.columns([0.25, 0.25, 0.5])
+    dest_other = [j for j in range(num_sets) if j != i]
+    dest_map = {f"Set {j+1}": j for j in dest_other} or {f"Set {i+1}": i}
+    with ba_sel:
+        dest_choice = st.selectbox(f"Ziel für Auswahl – {set_names[i]}", list(dest_map.keys()), key=f"batch_dest_{i}")
+    with ba1:
+        if st.button("Ausgewählte → anderes Set", key=f"mv_batch_{i}"):
+            selected = [sid for (si, sid), v in ss["sel"].items() if si == i and v]
+            j = dest_map[dest_choice]
+            if j is not None and selected:
+                for sid in selected:
+                    if sid in ss["sets"][i]:
+                        ss["sets"][i].remove(sid)
+                        ss["sets"][j].append(sid)
+                        ss["sel"][(i, sid)] = False
+                st.rerun()
+    with ba2:
+        if st.button("Ausgewählte → Pool", key=f"pool_batch_{i}"):
+            selected = [sid for (si, sid), v in ss["sel"].items() if si == i and v]
+            for sid in selected:
+                if sid in ss["sets"][i]:
+                    ss["sets"][i].remove(sid)
+                    if sid not in ss["pool"]:
+                        ss["pool"].append(sid)
+                    ss["sel"][(i, sid)] = False
+            st.rerun()
 
 # ===== Export =====
 st.subheader("Export")
-c1,c2 = st.columns(2)
+
+def make_pdf_concert(title: str):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.cell(0, 12, latin1_safe(f"Setliste {title}"), ln=1, align="L")
+    for i in range(num_sets):
+        ids = ss["sets"][i]
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.cell(0, 9, latin1_safe(f"Set {i+1}"), ln=1)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(12, 8, "#", 1, 0, "C")
+        pdf.cell(118, 8, latin1_safe("Titel"), 1, 0)
+        pdf.cell(22, 8, latin1_safe("Dauer"), 1, 0, "C")
+        pdf.cell(20, 8, latin1_safe("Tonart"), 1, 0, "C")
+        pdf.cell(20, 8, latin1_safe("Tempo"), 1, 1, "C")
+        pdf.set_font("Helvetica", "", 12)
+        for pos, sid in enumerate(ids, start=1):
+            s = ss["songs"][sid]
+            pdf.cell(12, 8, str(pos), 1, 0, "C")
+            pdf.cell(118, 8, latin1_safe(s["title"]), 1, 0)
+            pdf.cell(22, 8, seconds_to_mmss(s["duration_s"]), 1, 0, "C")
+            pdf.cell(20, 8, latin1_safe(s.get("key","") or "-"), 1, 0, "C")
+            pdf.cell(20, 8, latin1_safe(s.get("tempo","") or "-"), 1, 1, "C")
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(150, 8, latin1_safe("Set Dauer"), 1, 0, "R")
+        pdf.cell(42, 8, seconds_to_mmss(total_duration(ids)), 1, 1, "C")
+        pdf.ln(2)
+    total = sum(total_duration(ss["sets"][i]) for i in range(num_sets))
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(150, 10, latin1_safe("Gesamtdauer"), 0, 0, "R")
+    pdf.cell(42, 10, seconds_to_mmss(total), 0, 1, "C")
+    return pdf_bytes(pdf)
+
+def make_pdf_suisa(title: str):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.cell(0, 12, latin1_safe(f"SUISA Liste {title}"), ln=1, align="L")
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(120, 8, latin1_safe("Titel"), 1, 0)
+    pdf.cell(72, 8, latin1_safe("Interpret"), 1, 1)
+    pdf.set_font("Helvetica", "", 12)
+    for i in range(num_sets):
+        for sid in ss["sets"][i]:
+            s = ss["songs"][sid]
+            pdf.cell(120, 8, latin1_safe(s["title"]), 1, 0)
+            pdf.cell(72, 8, latin1_safe(s.get("artist","")), 1, 1)
+    return pdf_bytes(pdf)
+
+def make_csv_all_sets() -> bytes:
+    # Titel, Dauer, Tonart, Tempo, Interpret, Set
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Titel", "Dauer", "Tonart", "Tempo", "Interpret", "Set"])
+    for i in range(num_sets):
+        for sid in ss["sets"][i]:
+            s = ss["songs"][sid]
+            writer.writerow([
+                s["title"],
+                seconds_to_mmss(s["duration_s"]),
+                s.get("key",""),
+                s.get("tempo",""),
+                s.get("artist",""),
+                f"Set {i+1}"
+            ])
+    return buf.getvalue().encode("utf-8")
+
+c1, c2, c3 = st.columns(3)
 with c1:
     if HAS_PDF:
         try:
-            pdf1 = make_pdf_concert(st.session_state.get("concert_name","Setliste"), set_names)
-            st.download_button("Setliste Konzert als PDF", data=pdf1, file_name="setliste_konzert.pdf", mime="application/pdf")
+            data = make_pdf_concert("")
+            st.download_button("⬇️ Konzert-PDF", data=data, file_name="setliste.pdf", mime="application/pdf", key="dl_concert")
         except Exception as e:
             st.error(f"PDF Fehler (Konzert): {e}")
     else:
-        st.error("PDF Export erfordert fpdf2 in requirements.")
-
+        st.warning("PDF Export erfordert fpdf2 in requirements.")
 with c2:
     if HAS_PDF:
         try:
-            pdf2 = make_pdf_suisa(st.session_state.get("concert_name","Setliste"), set_names)
-            st.download_button("SUISA Liste als PDF", data=pdf2, file_name="suisa_liste.pdf", mime="application/pdf")
+            data2 = make_pdf_suisa("")
+            st.download_button("⬇️ SUISA-PDF", data=data2, file_name="suisa.pdf", mime="application/pdf", key="dl_suisa")
         except Exception as e:
             st.error(f"PDF Fehler (SUISA): {e}")
     else:
-        st.error("PDF Export erfordert fpdf2 in requirements.")
+        st.warning("PDF Export erfordert fpdf2 in requirements.")
+with c3:
+    try:
+        csv_bytes = make_csv_all_sets()
+        st.download_button("⬇️ CSV (alle Sets)", data=csv_bytes, file_name="setliste.csv", mime="text/csv", key="dl_csv")
+    except Exception as e:
+        st.error(f"CSV Fehler: {e}")
