@@ -1,5 +1,11 @@
 
-# Setlist App – Version 2.0.6
+# Setlist App – Version 2.0.7
+# Changes:
+# - Remove leftover bar element
+# - Return set-duration color logic (Green/Orange/Red as specified)
+# - Inline toolbar alignment
+# - CSV export restored
+# - PDF export: each Set on a new page
 
 import math
 import streamlit as st
@@ -15,8 +21,8 @@ ss = st.session_state
 # ========================
 # Branding & Page Config
 # ========================
-st.set_page_config(page_title="BD Setlist 2.0.6", layout="wide")
-st.title("BD Setlist 2.0.6")
+st.set_page_config(page_title="BD Setlist 2.0.7", layout="wide")
+st.title("BD Setlist 2.0.7")
 
 st.markdown("""
 <style>
@@ -26,6 +32,12 @@ st.markdown("""
   --brand:#004D59;
   --muted:#6b7280;
   --radius:14px;
+  --green:#E6F4EA;
+  --greenText:#0E7C3A;
+  --orange:#FFF4E5;
+  --orangeText:#7A3E00;
+  --red:#FDE8E8;
+  --redText:#B42318;
 }
 
 html, body, [class*="block-container"] { font-size:15px; }
@@ -43,7 +55,7 @@ h1, h2, h3, h4, h5, h6, .stButton>button { font-family: 'Montserrat', sans-serif
 }
 .stButton>button:hover { background-color: #00738A; }
 
-/* Cards (nur noch für Sets/Editor – Repertoire ohne Pane) */
+/* Cards */
 .card { background: #fff; border: 1px solid #e5e7eb; border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; }
 
 /* Chips */
@@ -54,9 +66,13 @@ h1, h2, h3, h4, h5, h6, .stButton>button { font-family: 'Montserrat', sans-serif
 
 .headerlabel{font-weight:700;color:#374151;font-size:14px;margin-bottom:6px;}
 
+/* Inline toolbar */
 .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:nowrap;margin:8px 0;}
 .toolbar > div { display:flex; align-items:center; }
 .toolbar .stSelectbox, .toolbar .stButton { margin-top: 0 !important; }
+
+/* Remove any stray full-width bars (older Streamlit classes) */
+hr, .stProgress { display:none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -90,6 +106,21 @@ def seconds_to_mmss(total):
 
 def total_duration(ids):
     return sum(ss.songs[i]["duration_s"] for i in ids if i in ss.songs)
+
+def badge_style_for_delta(cur_s, tgt_min):
+    """Color logic:
+       Grün = Ziel erreicht -1min bis +2min
+       Orange = unter Ziel (< -1min)
+       Rot = über Ziel ab +2min (>= +120s)
+    """
+    diff = cur_s - tgt_min*60
+    if diff >= 120:  # >= +2min
+        bg, fg = "var(--red)", "var(--redText)"
+    elif diff < -60:  # more than 1min under
+        bg, fg = "var(--orange)", "var(--orangeText)"
+    else:  # within [-1min, +2min)
+        bg, fg = "var(--green)", "var(--greenText)"
+    return f"background:{bg};color:{fg};padding:6px 10px;border-radius:10px;font-weight:700;text-align:right;"
 
 # ========================
 # Session Defaults
@@ -184,7 +215,7 @@ with st.expander("➕ Neuen Song anlegen", expanded=False):
             st.rerun()
 
 # ========================
-# 🎵 Repertoire (ohne Balken/Pane)
+# 🎵 Repertoire (ohne Pane/Balken)
 # ========================
 def pool_ids():
     used = set(i for s in ss.sets[:ss.active_sets] for i in s)
@@ -231,7 +262,10 @@ with st.expander("🎼 Sets", expanded=True):
         tgt = tcol1.number_input(f"Ziel Minuten · Set {i+1}", 0, 300, ss.targets_min[i], key=f"tgt_{i}")
         ss.targets_min[i] = tgt
         cur_s = total_duration(ids)
-        tcol2.markdown(f"<div style='text-align:right;'>Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>", unsafe_allow_html=True)
+        tcol2.markdown(
+            f"<div style='{badge_style_for_delta(cur_s, tgt)}'>Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>",
+            unsafe_allow_html=True
+        )
 
         # Header
         h1, h2, h3, h4, h5, h6 = st.columns([6,1,1,1,2,0.7])
@@ -272,7 +306,7 @@ with st.expander("🎼 Sets", expanded=True):
             with c6:
                 st.checkbox("", key=f"sel_{i}_{sid}")
 
-        # Multi-Action Toolbar (one line)
+        # Multi-Action Toolbar (inline)
         st.markdown("<div class='toolbar'>", unsafe_allow_html=True)
         tb1, tb2, tb3 = st.columns([1.2, 1.4, 1])
         with tb1:
@@ -299,7 +333,7 @@ with st.expander("🎼 Sets", expanded=True):
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ========================
-# 📤 Export – Rounder PDF layout
+# 📤 Export – PDFs & CSV
 # ========================
 with st.expander("📤 Export", expanded=False):
     concert_name = st.text_input("Titel auf Export", value=ss.get("concert_name",""), key="concert_name_input_2")
@@ -333,43 +367,32 @@ with st.expander("📤 Export", expanded=False):
         m, s = divmod(int(total), 60)
         return f"{m:02d}:{s:02d}"
 
-    def make_pdf_concert() -> bytes:
-        if not HAS_PDF:
-            raise RuntimeError("fpdf2 nicht installiert")
-        pdf = FPDF(orientation="P", unit="mm", format="A4")
+    def new_page_with_header(pdf, title_text):
         pdf.add_page()
         pdf.set_auto_page_break(True, 14)
-
-        # Brand Header (rounded banner)
         pdf.set_draw_color(0,77,89)
         pdf.set_fill_color(0,77,89)
         rounded_rect(pdf, 10, 10, 190, 14, r=5, style='F')
         pdf.set_text_color(255,255,255)
         pdf.set_font("Helvetica","B",14)
         pdf.set_xy(10, 12)
-        pdf.cell(190,10,"BD Setlist", align="C")
+        pdf.cell(190,10, title_text, align="C")
         pdf.ln(12)
 
-        # Title box
-        pdf.set_text_color(0,77,89)
-        pdf.set_font("Helvetica","B",16)
-        pdf.cell(0,10, ss.get("concert_name") or "Setliste", ln=1)
-        pdf.ln(1)
-
-        # Sets in rounded cards
+    def make_pdf_concert() -> bytes:
+        if not HAS_PDF:
+            raise RuntimeError("fpdf2 nicht installiert")
+        pdf = FPDF(orientation="P", unit="mm", format="A4")
+        # Each set on its own page
         for si in range(ss.active_sets):
-            # Card background
-            pdf.set_draw_color(229,231,235)
-            pdf.set_fill_color(248,250,252)
-            y_start = pdf.get_y()
-            rounded_rect(pdf, 10, y_start, 190, 10, r=3, style='DF')
-            pdf.set_xy(12, y_start+2)
+            new_page_with_header(pdf, "BD Setlist")
+            # Title
             pdf.set_text_color(0,77,89)
-            pdf.set_font("Helvetica","B",13)
-            pdf.cell(0,6, f"Set {si+1}", ln=1)
-
-            # Table header (soft grey)
+            pdf.set_font("Helvetica","B",16)
+            pdf.cell(0,10, (ss.get("concert_name") or "Setliste") + f" – Set {si+1}", ln=1)
             pdf.ln(1)
+
+            # Table header
             pdf.set_font("Helvetica","B",11)
             pdf.set_draw_color(229,231,235)
             pdf.set_fill_color(241,245,249)
@@ -398,7 +421,6 @@ with st.expander("📤 Export", expanded=False):
             pdf.cell(22,8,mmss_local(total),1,0,"C")
             pdf.cell(22,8,"",1,0)
             pdf.cell(22,8,"",1,1)
-            pdf.ln(3)
 
         out = pdf.output(dest="S")
         if isinstance(out, bytearray): return bytes(out)
@@ -409,34 +431,20 @@ with st.expander("📤 Export", expanded=False):
         if not HAS_PDF:
             raise RuntimeError("fpdf2 nicht installiert")
         pdf = FPDF(orientation="P", unit="mm", format="A4")
-        pdf.add_page()
-        pdf.set_auto_page_break(True, 14)
-
-        # Brand Header
-        pdf.set_draw_color(0,77,89)
-        pdf.set_fill_color(0,77,89)
-        rounded_rect(pdf, 10, 10, 190, 14, r=5, style='F')
-        pdf.set_text_color(255,255,255)
-        pdf.set_font("Helvetica","B",14)
-        pdf.set_xy(10, 12)
-        pdf.cell(190,10,"BD SUISA-Liste", align="C")
-        pdf.ln(12)
-
-        pdf.set_text_color(0,77,89)
-        pdf.set_font("Helvetica","B",16)
-        pdf.cell(0,10, ss.get("concert_name") or "SUISA Liste", ln=1)
-        pdf.ln(1)
-
-        # Table
-        pdf.set_font("Helvetica","B",11)
-        pdf.set_draw_color(229,231,235)
-        pdf.set_fill_color(241,245,249)
-        pdf.set_text_color(17,24,39)
-        pdf.cell(120,8,"Titel",1,0,"L",True)
-        pdf.cell(70,8,"Artist",1,1,"L",True)
-
-        pdf.set_font("Helvetica","",11)
         for si in range(ss.active_sets):
+            new_page_with_header(pdf, "BD SUISA-Liste")
+            pdf.set_text_color(0,77,89)
+            pdf.set_font("Helvetica","B",16)
+            pdf.cell(0,10, (ss.get("concert_name") or "SUISA Liste") + f" – Set {si+1}", ln=1)
+            pdf.ln(1)
+            pdf.set_font("Helvetica","B",11)
+            pdf.set_draw_color(229,231,235)
+            pdf.set_fill_color(241,245,249)
+            pdf.set_text_color(17,24,39)
+            pdf.cell(120,8,"Titel",1,0,"L",True)
+            pdf.cell(70,8,"Artist",1,1,"L",True)
+
+            pdf.set_font("Helvetica","",11)
             for sid in ss.sets[si]:
                 s = ss.songs.get(sid)
                 if not s: continue
@@ -448,12 +456,34 @@ with st.expander("📤 Export", expanded=False):
         if isinstance(out, str): return out.encode("latin-1","replace")
         return out
 
-    from io import BytesIO
-    if HAS_PDF:
-        try:
-            st.download_button("Setliste als PDF", make_pdf_concert(), file_name="setliste_konzert.pdf", mime="application/pdf")
-            st.download_button("SUISA als PDF", make_pdf_suisa(), file_name="setliste_suisa.pdf", mime="application/pdf")
-        except Exception as e:
-            st.error(f"PDF Fehler: {e}")
-    else:
-        st.warning("PDF Export erfordert fpdf2 in requirements.")
+    def make_csv() -> bytes:
+        lines = ["Titel,Dauer,Tonart,Tempo,Artist,Set"]
+        for si in range(ss.active_sets):
+            for sid in ss.sets[si]:
+                s = ss.songs.get(sid)
+                if not s: continue
+                title = s["title"].replace(","," ")
+                dur = seconds_to_mmss(s["duration_s"])
+                key = (s.get("key","") or "").replace(","," ")
+                tempo = (s.get("tempo","") or "").replace(","," ")
+                artist = (s.get("artist","") or "").replace(","," ")
+                lines.append(f"{title},{dur},{key},{tempo},{artist},Set {si+1}")
+        return ("\\n".join(lines)).encode("utf-8")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if HAS_PDF:
+            try:
+                st.download_button("Setliste als PDF", make_pdf_concert(), file_name="setliste_konzert.pdf", mime="application/pdf")
+            except Exception as e:
+                st.error(f"PDF Fehler Setliste: {e}")
+        else:
+            st.warning("PDF Export erfordert fpdf2 in requirements.")
+    with c2:
+        if HAS_PDF:
+            try:
+                st.download_button("SUISA als PDF", make_pdf_suisa(), file_name="setliste_suisa.pdf", mime="application/pdf")
+            except Exception as e:
+                st.error(f"PDF Fehler SUISA: {e}")
+    with c3:
+        st.download_button("CSV Export", make_csv(), file_name="setliste.csv", mime="text/csv")
