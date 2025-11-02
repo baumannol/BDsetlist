@@ -1,11 +1,11 @@
 
-# Setlist App – Version 2.0.1
-# Änderungen:
-# • Kein Konzert speichern/laden
-# • Repertoire-Auswahl via Checkbox-Liste (inkl. "Alle auswählen"), ähnlich Gagenrechner
-# • Sets untereinander statt nebeneinander
-# • Alle Hauptbereiche als klappbare Menüs
-# • Fix: st.experimental_rerun() -> st.rerun()
+# Setlist App – Version 2.0.2
+# Tweaks per feedback:
+# • Repertoire: Checkbox-Liste bleibt; klarer Call-to-Action. (Auswahl -> Button)
+# • "Anzahl Set": immer "Set"; Wechsel via Radio (orange markiert), kein Balken
+# • Kleinere Schriftgrössen in Set-Zeilen; einheitliche Spaltenbreiten
+# • "Entf" -> "Löschen"
+# • Bessere vertikale Ausrichtung von Labels und Werten in den Sets
 
 import streamlit as st
 
@@ -20,8 +20,8 @@ ss = st.session_state
 # ========================
 # Branding & Page Config
 # ========================
-st.set_page_config(page_title="BD Setlist 2.0.1", layout="wide")
-st.title("BD Setlist 2.0.1")
+st.set_page_config(page_title="BD Setlist 2.0.2", layout="wide")
+st.title("BD Setlist 2.0.2")
 
 st.markdown("""
 <style>
@@ -36,10 +36,10 @@ st.markdown("""
   --muted:#6b7280;
   --row:#f8fafc;
   --row2:#eef2f7;
-  --radius:18px;
+  --radius:16px;
 }
 
-html, body, [class*="block-container"] { font-size:18px; }
+html, body, [class*="block-container"] { font-size:16px; }
 h1, h2, h3, h4, h5, h6, .stButton>button { font-family: 'Montserrat', sans-serif; font-weight: 700; }
 p, ul, li, div, span, .stTextInput>div>div>input, .stNumberInput>div>input, .stSelectbox, .stMultiSelect, .stCheckbox { font-family: 'Space Mono', monospace; }
 
@@ -47,37 +47,39 @@ p, ul, li, div, span, .stTextInput>div>div>input, .stNumberInput>div>input, .stS
   background-color: var(--brand);
   color: white;
   border: none;
-  border-radius: 10px;
-  padding: 8px 16px;
-  font-size: 16px;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 15px;
 }
 .stButton>button:hover { background-color: #00738A; }
 
 /* Cards */
-.card { background: #fff; border: 1px solid #e5e7eb; border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; }
 .card-beige { background: var(--beige); }
 .card-blue { background: var(--blue); }
 
-/* Rows */
-.hdr{display:flex;gap:8px;align-items:center;padding:6px 8px;font-weight:700;}
-.row{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;}
-.row:nth-child(even){ background: var(--row2); }
-.cell-title{flex:1;}
-.cell{width:92px;text-align:center;}
-.cell-actions{width:170px;display:flex;gap:6px;justify-content:flex-end;}
-.cell-select{width:80px;text-align:right;}
-.badge{padding:6px 10px;border-radius:10px;background:#eef2f7;color:#111827;border:1px solid #e5e7eb;}
-.toolbar{display:flex;align-items:center;gap:12px;padding:10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:8px 0;}
+/* Set table-ish layout */
+.hdr{display:grid;grid-template-columns: 1fr 90px 70px 70px 160px 60px;gap:8px;align-items:center;padding:4px 6px;font-weight:700;font-size:14px;}
+.row{display:grid;grid-template-columns: 1fr 90px 70px 70px 160px 60px;gap:8px;align-items:center;padding:6px;border-radius:10px;font-size:15px;}
+.row:nth-child(odd){ background: var(--row2); }
+.cell-title .title{font-weight:700;margin:0;padding:0;}
+.cell-title .sub{font-size:13px;color:var(--muted);margin:0;padding:0;}
+.cell-chip{padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;background:#eef2f7;text-align:center;}
 
-/* Pills for number of sets */
-.pills{display:flex;gap:10px;margin-bottom:6px;}
-.pill{padding:8px 16px;border:1px solid #cbd5e1;border-radius:9999px;background:#e2e8f0;cursor:pointer;}
-.pill.active{background:var(--brand);color:#fff;border-color:var(--brand);}
-
-/* Summary delta */
-.delta { padding: 6px 10px; border-radius: 10px; font-weight: 700; }
+.toolbar{display:flex;align-items:center;gap:12px;padding:8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:8px 0;}
 
 .helper {font-size:14px;color:var(--muted);}
+
+/* Anzahl Set Radio */
+div[data-testid="stRadio"] .st-emotion-cache-1aumxhk { gap: 10px; }
+div[data-testid="stRadio"] label { padding:6px 12px; border:1px solid #cbd5e1; border-radius:999px; background:#e2e8f0; }
+div[data-testid="stRadio"] input:checked + div > label,
+div[data-testid="stRadio"] .st-ce-selected label {
+  background: var(--accent) !important; color:#111 !important; border-color: var(--accent) !important;
+}
+
+/* Small delete button look */
+.btn-del > button{ background: #004D59; color:#fff; border:none; border-radius:10px; padding:8px 14px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,14 +124,7 @@ def delta_style(cur_s, tgt_min):
         bg, fg = "#FFF4E5", "#7A3E00"     # orange ab +1min
     else:
         bg, fg = "#EEF2F7", "#111827"     # neutral
-    return f"background:{bg};color:{fg};"
-
-def latin1_safe(text: str) -> str:
-    try:
-        text.encode("latin-1")
-        return text
-    except Exception:
-        return text.encode("latin-1", "replace").decode("latin-1")
+    return f"background:{bg};color:{fg};padding:6px 10px;border-radius:10px;font-weight:700;"
 
 # ========================
 # Session Defaults
@@ -151,7 +146,7 @@ def init_state():
 init_state()
 
 # ========================
-# Setlist 1.0 – eingebettet (Artist ohne Arrangeur, Tempo 120, Tonart C)
+# Setlist 1.0 – eingebettet
 # ========================
 SETLIST_1_0 = [
     ("Alors, don't start the blinding lights","Dua Lipa, Stromae, The Weeknd","05:26"),
@@ -186,7 +181,7 @@ def seed_setlist_from_list(rows):
     ss.songs.clear()
     ss.next_id = 1
     for title, artist, dur in rows:
-        if not title: 
+        if not title:
             continue
         ss.songs[ss.next_id] = {
             "title": title.strip(),
@@ -225,7 +220,7 @@ with st.expander("➕ Neuen Song anlegen", expanded=False):
             st.rerun()
 
 # ========================
-# Repertoire (Checkbox-Liste)
+# 🎵 Repertoire
 # ========================
 def pool_ids():
     used = set(i for s in ss.sets[:ss.active_sets] for i in s)
@@ -243,10 +238,11 @@ with st.expander("🎵 Repertoire", expanded=True):
         with cols[idx % 2]:
             if st.checkbox(label, value=all_cb, key=f"pool_cb_{sid}"):
                 selected.append(sid)
-    dest_label = st.selectbox("Ziel Set", [f"Set {i}" for i in range(1, ss.active_sets+1)])
-    if st.button("Hinzufügen zum Set", key="add_to_set"):
+    dest = st.radio("Ziel Set", [1,2,3][:ss.active_sets], horizontal=True, format_func=lambda i: f"{i} Set")
+    st.caption("Tipp: Auswahl per Checkbox setzen und danach auf 'Auswahl in Set übernehmen' klicken.")
+    if st.button("Auswahl in Set übernehmen"):
         if selected:
-            tgt = int(dest_label.split(" ")[1]) - 1
+            tgt = dest - 1
             for sid in selected:
                 if sid not in ss.sets[tgt]:
                     ss.sets[tgt].append(sid)
@@ -254,19 +250,16 @@ with st.expander("🎵 Repertoire", expanded=True):
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ========================
-# Anzahl Sets (Pills) – als eigenes Klappmenü
+# 🔢 Anzahl Set
 # ========================
-with st.expander("🔢 Anzahl Sets", expanded=False):
-    pcol = st.columns(3)
-    for idx, c in enumerate(pcol, start=1):
-        with c:
-            active = "pill active" if ss.active_sets == idx else "pill"
-            if st.button(f"{idx} Set" if idx==1 else f"{idx} Sets", key=f"sets_{idx}"):
-                ss.active_sets = idx
-            st.markdown(f"<div class='{active}'></div>", unsafe_allow_html=True)
+with st.expander("🔢 Anzahl Set", expanded=False):
+    new_count = st.radio("Anzahl", [1,2,3], index=ss.active_sets-1, horizontal=True, format_func=lambda i: f"{i} Set")
+    if new_count != ss.active_sets:
+        ss.active_sets = new_count
+        st.rerun()
 
 # ========================
-# Sets (untereinander)
+# 🎼 Sets (untereinander)
 # ========================
 with st.expander("🎼 Sets", expanded=True):
     for i in range(ss.active_sets):
@@ -279,20 +272,19 @@ with st.expander("🎼 Sets", expanded=True):
         ss.targets_min[i] = tgt
         cur_s = total_duration(ids)
         tcol2.markdown(
-            f"<div class='delta' style='{delta_style(cur_s, tgt)}text-align:right;'>"
-            f"Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>",
+            f"<div style='{delta_style(cur_s, tgt)}text-align:right;'>Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>",
             unsafe_allow_html=True
         )
 
         # Kopfzeile
         st.markdown("""
         <div class='hdr'>
-          <div class='cell-title'>Titel</div>
-          <div class='cell'>Dauer</div>
-          <div class='cell'>Tonart</div>
-          <div class='cell'>Tempo</div>
-          <div class='cell-actions'>Aktion</div>
-          <div class='cell-select'>Ausw.</div>
+          <div>Titel</div>
+          <div>Dauer</div>
+          <div>Tonart</div>
+          <div>Tempo</div>
+          <div>Aktion</div>
+          <div>Ausw.</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -301,22 +293,34 @@ with st.expander("🎼 Sets", expanded=True):
             s = ss.songs.get(sid, None)
             if not s:
                 continue
-            c1, c2, c3, c4, c5, c6 = st.columns([6,1,1,1,2,1])
-            c1.write(f"**{s['title']}**  \n<span class='helper'>{s.get('artist','')}</span>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='badge'>{seconds_to_mmss(s['duration_s'])}</div>", unsafe_allow_html=True)
-            c3.markdown(s.get("key","") or "–")
-            c4.markdown(s.get("tempo","") or "–")
-            b_up, b_dn, b_rm = c5.columns(3)
-            if b_up.button("↑", key=f"up_{i}_{sid}") and pos > 0:
-                ids[pos-1], ids[pos] = ids[pos], ids[pos-1]
-                st.rerun()
-            if b_dn.button("↓", key=f"down_{i}_{sid}") and pos < len(ids) - 1:
-                ids[pos+1], ids[pos] = ids[pos], ids[pos+1]
-                st.rerun()
-            if b_rm.button("Entf", key=f"rm_{i}_{sid}"):
-                ids.remove(sid)
-                st.rerun()
+            st.markdown("<div class='row'>", unsafe_allow_html=True)
+            # Titel + Artist
+            st.markdown(
+                f"<div class='cell-title'><p class='title'>{s['title']}</p><p class='sub'>{s.get('artist','')}</p></div>",
+                unsafe_allow_html=True
+            )
+            # Dauer
+            st.markdown(f"<div class='cell-chip'>{seconds_to_mmss(s['duration_s'])}</div>", unsafe_allow_html=True)
+            # Tonart / Tempo
+            st.markdown(f"<div class='cell-chip'>{s.get('key','') or '–'}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='cell-chip'>{s.get('tempo','') or '–'}</div>", unsafe_allow_html=True)
+            # Buttons
+            c_up, c_dn, c_rm = st.columns(3)
+            with c_up:
+                if st.button("↑", key=f"up_{i}_{sid}") and pos > 0:
+                    ids[pos-1], ids[pos] = ids[pos], ids[pos-1]
+                    st.rerun()
+            with c_dn:
+                if st.button("↓", key=f"down_{i}_{sid}") and pos < len(ids) - 1:
+                    ids[pos+1], ids[pos] = ids[pos], ids[pos+1]
+                    st.rerun()
+            with c_rm:
+                if st.button("Löschen", key=f"rm_{i}_{sid}"):
+                    ids.remove(sid)
+                    st.rerun()
+            # Auswahl
             st.checkbox("", key=f"sel_{i}_{sid}")
+            st.markdown("</div>", unsafe_allow_html=True)
 
         # Aktionen Leiste
         st.markdown("<div class='toolbar'>", unsafe_allow_html=True)
@@ -344,11 +348,15 @@ with st.expander("🎼 Sets", expanded=True):
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ========================
-# Export
+# 📤 Export
 # ========================
 with st.expander("📤 Export", expanded=False):
     concert_name = st.text_input("Titel auf Export", value=ss.get("concert_name",""), key="concert_name_input_2")
     ss["concert_name"] = concert_name
+
+    def seconds_to_mmss_local(total):
+        m, s = divmod(int(total), 60)
+        return f"{m:02d}:{s:02d}"
 
     def make_pdf_concert() -> bytes:
         if not HAS_PDF:
@@ -393,13 +401,14 @@ with st.expander("📤 Export", expanded=False):
                     continue
                 pdf.cell(10,8,str(idx),1,0,"C")
                 pdf.cell(100,8,s["title"],1,0,"L")
-                pdf.cell(20,8,seconds_to_mmss(s["duration_s"]),1,0,"C")
+                pdf.cell(20,8,seconds_to_mmss_local(s["duration_s"]),1,0,"C")
                 pdf.cell(20,8,s.get("key",""),1,0,"C")
                 pdf.cell(20,8,s.get("tempo",""),1,1,"C")
             # Total
             pdf.set_font("Helvetica","B",12)
+            total = sum(ss.songs[i]["duration_s"] for i in ss.sets[si])
             pdf.cell(130,8,"Setdauer",1,0,"R")
-            pdf.cell(20,8,seconds_to_mmss(sum(ss.songs[i]["duration_s"] for i in ss.sets[si])),1,1,"C")
+            pdf.cell(20,8,seconds_to_mmss_local(total),1,1,"C")
             pdf.ln(2)
 
         out = pdf.output(dest="S")
@@ -450,6 +459,9 @@ with st.expander("📤 Export", expanded=False):
         return out
 
     def make_csv() -> bytes:
+        def mmss(x):
+            m, s = divmod(int(x), 60)
+            return f"{m:02d}:{s:02d}"
         lines = ["Titel,Dauer,Tonart,Tempo,Artist,Set"]
         for si in range(ss.active_sets):
             for sid in ss.sets[si]:
@@ -457,7 +469,7 @@ with st.expander("📤 Export", expanded=False):
                 if not s: 
                     continue
                 title = s["title"].replace(","," ")
-                dur = seconds_to_mmss(s["duration_s"])
+                dur = mmss(s["duration_s"])
                 key = (s.get("key","") or "").replace(","," ")
                 tempo = (s.get("tempo","") or "").replace(","," ")
                 artist = (s.get("artist","") or "").replace(","," ")
