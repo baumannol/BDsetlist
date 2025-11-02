@@ -1,6 +1,11 @@
-# setlist_app.py – Version 1.2
-# Kompakte Setlist App mit Pool, bis zu drei Sets, Zielzeit, Export als PDF und CSV
 
+# Setlist App – Version 2.0 (Brand + Setlist 1.0 eingebettet)
+# Look & Feel angelehnt an den Brass Department Gagenrechner (Montserrat/Space Mono, Petrol/Orange/Beige)
+# Features: Song-Pool, bis zu 3 Sets, Zielzeiten, Reordering, Export (PDF Konzert, PDF SUISA, CSV),
+#           Speichern/Laden von Konzerten, Setlist-Import (aus eingebetteter Konstante), kein Upload noetig
+
+import io
+import csv
 import streamlit as st
 
 try:
@@ -11,28 +16,86 @@ except Exception:
 
 ss = st.session_state
 
-# ---------------- Initialisierung ----------------
-def init_state():
-    if "songs" not in ss:
-        ss.songs = {
-            1: {"title": "Alors, dont start the blinding lights", "duration_s": 326, "artist": "Dua Lipa / Stromae / The Weeknd", "tempo": "", "key": ""},
-            2: {"title": "Clandestino", "duration_s": 196, "artist": "Manu Chao", "tempo": "", "key": ""},
-            3: {"title": "Dance Monkey", "duration_s": 249, "artist": "Tones and I", "tempo": "", "key": ""},
-            4: {"title": "Die with a smile", "duration_s": 255, "artist": "Bruno Mars / Lady Gaga", "tempo": "", "key": ""},
-            5: {"title": "Emergency Hip Hop", "duration_s": 290, "artist": "Diverse", "tempo": "", "key": ""},
-            6: {"title": "Uptown Funk", "duration_s": 270, "artist": "Mark Ronson", "tempo": "", "key": ""},
-        }
-    if "next_id" not in ss:
-        ss.next_id = max(ss.songs.keys()) + 1 if ss.songs else 1
-    if "sets" not in ss:
-        ss.sets = [[], [], []]   # drei Sets
-    if "active_sets" not in ss:
-        ss.active_sets = 3
-    if "targets_min" not in ss:
-        ss.targets_min = [0, 0, 0]
-    if "concert_name" not in ss:
-        ss.concert_name = ""
+# ========================
+# Branding & Page Config
+# ========================
+st.set_page_config(page_title="BD Setlist 2.0", layout="wide")
+st.title("BD Setlist 2.0")
 
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Space+Mono&display=swap');
+
+:root{
+  --brand:#004D59;   /* Petrol */
+  --accent:#F7A600;  /* Orange */
+  --beige:#FDF1E7;   /* Beige */
+  --blue:#E3F2FD;    /* Hellblau */
+  --ink:#1f2937;
+  --muted:#6b7280;
+  --row:#f8fafc;
+  --row2:#eef2f7;
+  --radius:18px;
+}
+
+html, body, [class*="block-container"] { font-size:18px; }
+h1, h2, h3, h4, h5, h6, .stButton>button { font-family: 'Montserrat', sans-serif; font-weight: 700; }
+p, ul, li, div, span, .stTextInput>div>div>input, .stNumberInput>div>input, .stSelectbox, .stMultiSelect, .stCheckbox { font-family: 'Space Mono', monospace; }
+
+.stButton>button {
+  background-color: var(--brand);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 16px;
+}
+.stButton>button:hover { background-color: #00738A; }
+
+footer { visibility: hidden; }
+footer:after {
+  content: 'Built with ❤️ by Brass Department';
+  visibility: visible;
+  display: block;
+  padding: 10px;
+  text-align: center;
+  font-family: 'Space Mono', monospace;
+  font-size: 14px;
+  color: var(--brand);
+}
+
+/* Cards */
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px; }
+.card-beige { background: var(--beige); }
+.card-blue { background: var(--blue); }
+
+/* Rows */
+.hdr{display:flex;gap:8px;align-items:center;padding:6px 8px;font-weight:700;}
+.row{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;}
+.row:nth-child(even){ background: var(--row2); }
+.cell-title{flex:1;}
+.cell{width:92px;text-align:center;}
+.cell-actions{width:170px;display:flex;gap:6px;justify-content:flex-end;}
+.cell-select{width:80px;text-align:right;}
+.badge{padding:6px 10px;border-radius:10px;background:#eef2f7;color:#111827;border:1px solid #e5e7eb;}
+.toolbar{display:flex;align-items:center;gap:12px;padding:10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:8px 0;}
+
+/* Pills for number of sets */
+.pills{display:flex;gap:10px;margin-bottom:6px;}
+.pill{padding:8px 16px;border:1px solid #cbd5e1;border-radius:9999px;background:#e2e8f0;cursor:pointer;}
+.pill.active{background:var(--brand);color:#fff;border-color:var(--brand);}
+
+/* Summary delta */
+.delta { padding: 6px 10px; border-radius: 10px; font-weight: 700; }
+
+/* Upload area */
+.helper {font-size:14px;color:var(--muted);}
+</style>
+""", unsafe_allow_html=True)
+
+# ========================
+# Utilities
+# ========================
 def mmss_to_seconds(m, s):
     try:
         m = int(m or 0); s = int(s or 0)
@@ -40,6 +103,18 @@ def mmss_to_seconds(m, s):
         m, s = 0, 0
     s = max(0, min(59, s)); m = max(0, m)
     return m * 60 + s
+
+def parse_mmss(text):
+    try:
+        if not text: return 0
+        parts = text.strip().split(":")
+        if len(parts)==2:
+            return mmss_to_seconds(parts[0], parts[1])
+        if len(parts)==1:
+            return int(parts[0])
+    except:
+        return 0
+    return 0
 
 def seconds_to_mmss(total):
     if total < 0: total = 0
@@ -58,12 +133,12 @@ def delta_style(cur_s, tgt_min):
     if delta <= 0:
         bg, fg = "#E6F4EA", "#0E7C3A"     # gruen
     elif delta >= 600:
-        bg, fg = "#FDE8E8", "#B42318"     # rot ab plus zehn Minuten
+        bg, fg = "#FDE8E8", "#B42318"     # rot ab +10min
     elif delta >= 60:
-        bg, fg = "#FFF4E5", "#7A3E00"     # orange ab plus eine Minute
+        bg, fg = "#FFF4E5", "#7A3E00"     # orange ab +1min
     else:
         bg, fg = "#EEF2F7", "#111827"     # neutral
-    return f"background:{bg};color:{fg};padding:6px 10px;border-radius:8px;font-weight:700;"
+    return f"background:{bg};color:{fg};"
 
 def latin1_safe(text: str) -> str:
     try:
@@ -72,45 +147,129 @@ def latin1_safe(text: str) -> str:
     except Exception:
         return text.encode("latin-1", "replace").decode("latin-1")
 
+# ========================
+# Session Defaults
+# ========================
+def init_state():
+    if "songs" not in ss:
+        ss.songs = {}   # leer bis Seed
+    if "next_id" not in ss:
+        ss.next_id = 1
+    if "sets" not in ss:
+        ss.sets = [[], [], []]   # bis zu 3 Sets
+    if "active_sets" not in ss:
+        ss.active_sets = 3
+    if "targets_min" not in ss:
+        ss.targets_min = [0, 0, 0]
+    if "concert_name" not in ss:
+        ss.concert_name = ""
+    if "saved_concerts" not in ss:
+        ss.saved_concerts = {}
+    if "current_concert" not in ss:
+        ss.current_concert = ""
+
 init_state()
 
-# ---------------- Seite und Stil ----------------
-st.set_page_config(page_title="Setlist", layout="wide")
-st.markdown("""
-<style>
-:root{ --brand:#0a5a66; --ink:#1f2937; --muted:#6b7280; --row:#f8fafc; --row2:#eef2f7; }
-html, body, [class*="block-container"] { font-size:18px; }
-h1,h2,h3,h4 { font-weight:800; letter-spacing:.3px; }
-.setcard{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px 14px;margin-bottom:12px;}
-.hdr{display:flex;gap:8px;padding:6px 8px;font-weight:700;}
-.row{display:flex;gap:8px;align-items:center;padding:8px;border-radius:8px;}
-.row:nth-child(even){background:var(--row2);}
-.cell-title{flex:1;}
-.cell{width:92px;text-align:center;}
-.cell-actions{width:160px;display:flex;gap:6px;justify-content:flex-end;}
-.cell-select{width:80px;text-align:right;}
-.btn-sm > button{padding:2px 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;}
-.btn-sm > button:hover{background:#f3f4f6;}
-.toolbar{display:flex;align-items:center;gap:12px;padding:6px 10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;margin:8px 0;}
-.pills{display:flex;gap:10px;margin-bottom:6px;}
-.pill{padding:6px 14px;border:1px solid #cbd5e1;border-radius:9999px;background:#e2e8f0;cursor:pointer;}
-.pill.active{background:var(--brand);color:#fff;border-color:var(--brand);}
-.tiny{font-size:14px;color:var(--muted);}
-.badge{padding:6px 10px;border-radius:8px;background:#eef2f7;color:#111827;}
-</style>
-""", unsafe_allow_html=True)
+# ========================
+# Setlist 1.0 – Eingebettet (Artist ohne Arrangeur, Tempo 120, Tonart C)
+# Dauer: wenn unbekannt -> 0 (00:00)
+# ========================
+SETLIST_1_0 = [
+    ("Alors, don't start the blinding lights","Dua Lipa, Stromae, The Weeknd","05:26"),
+    ("Avicii","", ""),
+    ("Bella Ballerino","", ""),
+    ("Carmabesque","", "06:00"),
+    ("Clandestino","Manu Chao","03:16"),
+    ("Dance Monkey","Tones and I","04:09"),
+    ("Die with a smile","Bruno Mars, Lady Gaga","04:15"),
+    ("Emergency Hip Hop","Diverse","04:50"),
+    ("Feeling Good","", "04:16"),
+    ("Fireflies","Owl City","03:24"),
+    ("Hip Hop Mix 2","Diverse","06:12"),
+    ("Hopes Stay As They Were","", "05:16"),
+    ("Komet/Monsun","", "03:34"),
+    ("Lean On","Major Lazer & DJ Snake","03:00"),
+    ("Leave the door open","Bruno Mars","04:08"),
+    ("Let's Get Bad","", "05:05"),
+    ("No Roots","Alice Merton","03:36"),
+    ("Oh Johnny","", ""),
+    ("Raw","", "05:00"),
+    ("Romano Hip Hop","Diverse","02:30"),
+    ("The Code","", "03:12"),
+    ("Toxic Industry","", "03:20"),
+    ("Valerie","", ""),
+    ("Vreneli vo Mahala","", "03:49"),
+    ("Wasabi","", ""),
+    ("Where is my husband?","", "03:15"),
+]
 
-st.markdown("<h1>Setlist</h1>", unsafe_allow_html=True)
+def seed_setlist_from_list(rows):
+    """rows: List[Tuple[title, artist, mm:ss?]]"""
+    ss.songs.clear()
+    ss.next_id = 1
+    for tup in rows:
+        title = (tup[0] or "").strip()
+        artist = (tup[1] or "").strip()
+        dur = parse_mmss(tup[2]) if len(tup) >= 3 else 0
+        if not title:
+            continue
+        ss.songs[ss.next_id] = {
+            "title": title,
+            "duration_s": dur,
+            "artist": artist,
+            "tempo": "120",
+            "key": "C",
+        }
+        ss.next_id += 1
 
-# ---------------- Neuer Song ----------------
-with st.expander("Neuen Song anlegen", expanded=False):
+# Auto-Seed beim ersten Start (kein Upload notwendig)
+if not ss.songs:
+    seed_setlist_from_list(SETLIST_1_0)
+
+# ========================
+# Save / Load Concert (State)
+# ========================
+def save_concert(name):
+    ss.saved_concerts[name] = {
+        k: v for k, v in ss.items()
+        if k not in ["saved_concerts", "current_concert"]
+    }
+    ss.current_concert = name
+    st.success(f"Konzert '{name}' gespeichert!")
+
+def load_concert(name):
+    data = ss.saved_concerts[name]
+    for k, v in data.items():
+        ss[k] = v
+    ss.current_concert = name
+    st.success(f"Konzert '{name}' geladen!")
+
+with st.expander("🎫 Konzert laden / speichern", expanded=False):
+    if ss.saved_concerts:
+        chosen = st.selectbox("Gespeicherte Konzerte", list(ss.saved_concerts.keys()), key="load_dropdown")
+        if st.button("📂 Laden"):
+            load_concert(chosen)
+    else:
+        st.info("Noch keine Konzerte gespeichert.")
+    st.markdown("---")
+    cn = st.text_input("Konzert-Name", value=ss.current_concert, key="concert_name_input")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.button("▶️ Speichern", disabled=(cn == ""), on_click=save_concert, args=(cn,))
+    with col2:
+        st.button("✏️ Aktualisieren", disabled=(cn == "" or cn not in ss.saved_concerts), on_click=save_concert, args=(cn,))
+
+# ========================
+# Neuen Song (manuell)
+# ========================
+with st.expander("➕ Neuen Song anlegen", expanded=False):
     c1, c2, c3, c4, c5, c6 = st.columns([3,1,1,3,1,1])
     title = c1.text_input("Titel")
     m = c2.number_input("Minuten", 0, 59, 3)
     s = c3.number_input("Sekunden", 0, 59, 0, step=5)
-    artist = c4.text_input("Interpret")
-    tempo = c5.text_input("Tempo")
-    key_sig = c6.text_input("Tonart")
+    artist = c4.text_input("Artist")
+    tempo = c5.text_input("Tempo", value="120")
+    key_sig = c6.text_input("Tonart", value="C")
     if st.button("Hinzufügen", key="add_song"):
         if title.strip():
             ss.songs[ss.next_id] = {
@@ -124,7 +283,9 @@ with st.expander("Neuen Song anlegen", expanded=False):
             st.success("Song hinzugefügt.")
             st.experimental_rerun()
 
-# ---------------- Anzahl Sets (Pills) ----------------
+# ========================
+# Anzahl Sets (Pills)
+# ========================
 st.subheader("Anzahl Sets")
 pcol = st.columns(3)
 for idx, c in enumerate(pcol, start=1):
@@ -134,11 +295,17 @@ for idx, c in enumerate(pcol, start=1):
             ss.active_sets = idx
         st.markdown(f"<div class='{active}'></div>", unsafe_allow_html=True)
 
-# ---------------- Repertoire ----------------
-st.subheader("Repertoire")
+# ========================
+# Repertoire (Pool)
+# ========================
+st.subheader("Repertoire (Pool)")
+st.markdown("<div class='card card-blue'>", unsafe_allow_html=True)
 pool = pool_ids()
-labels = [f"{ss.songs[i]['title']} ({seconds_to_mmss(ss.songs[i]['duration_s'])})" for i in pool]
-selected = st.multiselect("Songs auswählen", pool, format_func=lambda x: f"{ss.songs[x]['title']} ({seconds_to_mmss(ss.songs[x]['duration_s'])})")
+selected = st.multiselect(
+    "Songs auswählen",
+    pool,
+    format_func=lambda x: f"{ss.songs[x]['title']} ({seconds_to_mmss(ss.songs[x]['duration_s'])})"
+)
 dest_label = st.selectbox("Ziel Set", [f"Set {i}" for i in range(1, ss.active_sets+1)])
 if st.button("Hinzufügen zum Set", key="add_to_set"):
     if selected:
@@ -147,20 +314,27 @@ if st.button("Hinzufügen zum Set", key="add_to_set"):
             if sid not in ss.sets[tgt]:
                 ss.sets[tgt].append(sid)
         st.experimental_rerun()
+st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------------- Sets ----------------
+# ========================
+# Sets
+# ========================
 st.subheader("Sets")
 cols = st.columns(ss.active_sets) if ss.active_sets > 1 else [st]
 for i, col in enumerate(cols):
     with col:
         ids = ss.sets[i]
-        st.markdown("<div class='setcard'>", unsafe_allow_html=True)
+        st.markdown("<div class='card card-beige'>", unsafe_allow_html=True)
 
         tcol1, tcol2 = st.columns([1,1])
         tgt = tcol1.number_input(f"Ziel Minuten · Set {i+1}", 0, 300, ss.targets_min[i], key=f"tgt_{i}")
         ss.targets_min[i] = tgt
         cur_s = total_duration(ids)
-        tcol2.markdown(f"<div style='{delta_style(cur_s, tgt)};text-align:right;'>Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>", unsafe_allow_html=True)
+        tcol2.markdown(
+            f"<div class='delta' style='{delta_style(cur_s, tgt)}text-align:right;'>"
+            f"Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>",
+            unsafe_allow_html=True
+        )
 
         # Kopfzeile
         st.markdown("""
@@ -169,8 +343,8 @@ for i, col in enumerate(cols):
           <div class='cell'>Dauer</div>
           <div class='cell'>Tonart</div>
           <div class='cell'>Tempo</div>
-          <div class='cell-actions tiny'>Aktion</div>
-          <div class='cell-select tiny'>Ausw.</div>
+          <div class='cell-actions'>Aktion</div>
+          <div class='cell-select'>Ausw.</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -179,8 +353,8 @@ for i, col in enumerate(cols):
             s = ss.songs.get(sid, None)
             if not s:
                 continue
-            c1, c2, c3, c4, c5, c6 = st.columns([5,1,1,1,2,1])
-            c1.write(s["title"])
+            c1, c2, c3, c4, c5, c6 = st.columns([6,1,1,1,2,1])
+            c1.write(f"**{s['title']}**  \n<span class='helper'>{s.get('artist','')}</span>", unsafe_allow_html=True)
             c2.markdown(f"<div class='badge'>{seconds_to_mmss(s['duration_s'])}</div>", unsafe_allow_html=True)
             c3.markdown(s.get("key","") or "–")
             c4.markdown(s.get("tempo","") or "–")
@@ -211,7 +385,7 @@ for i, col in enumerate(cols):
                             ss.sets[target].append(sid)
                 st.experimental_rerun()
         with md:
-            dest = st.selectbox("Zielset", [f"Set {j+1}" for j in range(ss.active_sets) if j != i], key=f"dest_{i}")
+            st.selectbox("Zielset", [f"Set {j+1}" for j in range(ss.active_sets) if j != i], key=f"dest_{i}")
         with rb:
             if st.button("Ausgewählte → Pool", key=f"pool_{i}"):
                 pool_back = [sid for sid in ids if ss.get(f"sel_{i}_{sid}", False)]
@@ -219,13 +393,14 @@ for i, col in enumerate(cols):
                     if sid in ids:
                         ids.remove(sid)
                 st.experimental_rerun()
-        st.markdown("</div>", unsafe_allow_html=True)  # toolbar
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)  # setcard
-
-# ---------------- Export ----------------
+# ========================
+# Export
+# ========================
 st.subheader("Export")
-concert_name = st.text_input("Titel auf Export", value=ss.get("concert_name",""), key="concert_name_input")
+concert_name = st.text_input("Titel auf Export", value=ss.get("concert_name",""), key="concert_name_input_2")
 ss["concert_name"] = concert_name
 
 def make_pdf_concert() -> bytes:
@@ -234,19 +409,32 @@ def make_pdf_concert() -> bytes:
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_auto_page_break(True, 12)
+
+    # Brand Header
+    pdf.set_fill_color(0, 77, 89)  # Petrol
+    pdf.rect(0, 0, 210, 12, 'F')
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica","B",14)
+    pdf.cell(0,10, latin1_safe("BD Setlist"), ln=1, align="C")
+    pdf.ln(2)
+
     # Titel
-    pdf.set_font("Helvetica","B",18)
+    pdf.set_text_color(0, 77, 89)
+    pdf.set_font("Helvetica","B",16)
     pdf.cell(0,10, latin1_safe(ss.get("concert_name") or "Setliste"), ln=1)
     pdf.ln(2)
+
     # Sets
     for si in range(ss.active_sets):
+        pdf.set_text_color(0, 77, 89)
         pdf.set_font("Helvetica","B",14)
         pdf.cell(0,8, f"Set {si+1}", ln=1)
         # Kopfzeile
         pdf.set_font("Helvetica","B",12)
         pdf.set_fill_color(238,242,247)
+        pdf.set_text_color(0, 0, 0)
         pdf.cell(10,8,"#",1,0,"C",True)
-        pdf.cell(110,8,"Titel",1,0,"L",True)
+        pdf.cell(100,8,"Titel",1,0,"L",True)
         pdf.cell(20,8,"Dauer",1,0,"C",True)
         pdf.cell(20,8,"Tonart",1,0,"C",True)
         pdf.cell(20,8,"Tempo",1,1,"C",True)
@@ -257,15 +445,16 @@ def make_pdf_concert() -> bytes:
             if not s: 
                 continue
             pdf.cell(10,8,str(idx),1,0,"C")
-            pdf.cell(110,8,latin1_safe(s["title"]),1,0,"L")
+            pdf.cell(100,8,latin1_safe(s["title"]),1,0,"L")
             pdf.cell(20,8,seconds_to_mmss(s["duration_s"]),1,0,"C")
             pdf.cell(20,8,latin1_safe(s.get("key","")),1,0,"C")
             pdf.cell(20,8,latin1_safe(s.get("tempo","")),1,1,"C")
         # Total
         pdf.set_font("Helvetica","B",12)
-        pdf.cell(140,8,"Setdauer",1,0,"R")
+        pdf.cell(130,8,"Setdauer",1,0,"R")
         pdf.cell(20,8,seconds_to_mmss(total_duration(ss.sets[si])),1,1,"C")
         pdf.ln(2)
+
     out = pdf.output(dest="S")
     if isinstance(out, bytearray):
         return bytes(out)
@@ -279,13 +468,25 @@ def make_pdf_suisa() -> bytes:
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_auto_page_break(True, 12)
+
+    # Brand Header
+    pdf.set_fill_color(0, 77, 89)
+    pdf.rect(0, 0, 210, 12, 'F')
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica","B",14)
+    pdf.cell(0,10, latin1_safe("BD SUISA-Liste"), ln=1, align="C")
+    pdf.ln(2)
+
+    pdf.set_text_color(0, 77, 89)
     pdf.set_font("Helvetica","B",16)
     pdf.cell(0,10, latin1_safe(ss.get("concert_name") or "SUISA Liste"), ln=1)
     pdf.ln(2)
+
     pdf.set_font("Helvetica","B",12)
     pdf.set_fill_color(238,242,247)
+    pdf.set_text_color(0, 0, 0)
     pdf.cell(120,8,"Titel",1,0,"L",True)
-    pdf.cell(60,8,"Interpret",1,1,"L",True)
+    pdf.cell(60,8,"Artist",1,1,"L",True)
     pdf.set_font("Helvetica","",12)
     for si in range(ss.active_sets):
         for sid in ss.sets[si]:
@@ -302,7 +503,7 @@ def make_pdf_suisa() -> bytes:
     return out
 
 def make_csv() -> bytes:
-    lines = ["Titel,Dauer,Tonart,Tempo,Interpret,Set"]
+    lines = ["Titel,Dauer,Tonart,Tempo,Artist,Set"]
     for si in range(ss.active_sets):
         for sid in ss.sets[si]:
             s = ss.songs.get(sid)
@@ -314,7 +515,7 @@ def make_csv() -> bytes:
             tempo = (s.get("tempo","") or "").replace(","," ")
             artist = (s.get("artist","") or "").replace(","," ")
             lines.append(f"{title},{dur},{key},{tempo},{artist},Set {si+1}")
-    return ("\n".join(lines)).encode("utf-8")
+    return ("\\n".join(lines)).encode("utf-8")
 
 c1, c2, c3 = st.columns(3)
 with c1:
