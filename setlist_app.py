@@ -1,8 +1,9 @@
-# setlist_app_v2_0_9_mobile_dense.py
-# BD Setlist – Mobile DENSE Layout
-# - Neues "Dichtes Layout" fuer Mobile: zweizeilige Cards, kompakte Buttons in einer Reihe
-# - Weniger Padding/Margins, Text-Overflow mit Ellipsis, Meta inline
-# - Toggle, um Dense an/aus zu schalten
+# setlist_app_v2_0_9_mobile_dense_fixed.py
+# BD Setlist – Mobile DENSE Layout (fixed, no syntax issues)
+# - Zweizeilige, platzsparende Cards im Mobile-Modus
+# - Kompakte Buttons in einer Reihe
+# - Toggle fuer "Dichtes Layout"
+# - PDF/CSV Export wie gehabt (ohne Einzeiler/Semikola)
 
 import math
 import streamlit as st
@@ -66,9 +67,9 @@ h1, h2, h3, h4, h5, h6, .stButton>button { font-family: 'Montserrat', sans-serif
 .songline { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:8px; }
 .songmeta { display:flex; gap:8px; align-items:center; flex-wrap:nowrap; overflow:hidden; }
 .songmeta .chip { padding:4px 8px;border-radius:10px;border:1px solid #e5e7eb;background:#f3f4f6;display:inline-flex;align-items:center;gap:6px;font-size:12px; }
-.songmeta .artist { color: var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.songmeta .artist { color: var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 60vw; }
 .actions { display:flex; gap:6px; }
-.actions .stButton>button { min-width: 40px; } /* kompakte Touch-Ziele */
+.actions .stButton>button { min-width: 40px; }
 
 /* Dauer Badge rechts oben */
 .duration { padding:4px 8px;border-radius:10px;border:1px solid #e5e7eb;background:#fff; font-weight:700; }
@@ -95,26 +96,30 @@ hr, .stProgress { display:none !important; }
 # ========================
 def mmss_to_seconds(m, s):
     try:
-        m = int(m or 0); s = int(s or 0)
+        m = int(m or 0)
+        s = int(s or 0)
     except Exception:
         m, s = 0, 0
-    s = max(0, min(59, s)); m = max(0, m)
+    s = max(0, min(59, s))
+    m = max(0, m)
     return m * 60 + s
 
 def parse_mmss(text):
     try:
-        if not text: return 0
+        if not text:
+            return 0
         parts = text.strip().split(":")
-        if len(parts)==2:
+        if len(parts) == 2:
             return mmss_to_seconds(parts[0], parts[1])
-        if len(parts)==1:
+        if len(parts) == 1:
             return int(parts[0])
-    except:
+    except Exception:
         return 0
     return 0
 
 def seconds_to_mmss(total):
-    if total < 0: total = 0
+    if total < 0:
+        total = 0
     m, s = divmod(int(total), 60)
     return f"{m:02d}:{s:02d}"
 
@@ -190,7 +195,8 @@ def seed_setlist_from_list(rows):
     ss.songs.clear()
     ss.next_id = 1
     for title, artist, dur in rows:
-        if not title: continue
+        if not title:
+            continue
         ss.songs[ss.next_id] = {
             "title": title.strip(),
             "duration_s": parse_mmss(dur),
@@ -206,7 +212,7 @@ if not ss.songs:
 # ========================
 # Top Controls
 # ========================
-cA, cB, cC = st.columns([1,1,2])
+cA, cB, _ = st.columns([1,1,2])
 with cA:
     ss.mobile_mode = st.toggle("📱 Mobile Modus", value=ss.mobile_mode, help="Card-Layout fuer Smartphones")
 with cB:
@@ -267,48 +273,49 @@ with st.expander("🎵 Repertoire", expanded=True):
 # ========================
 def render_song_card_mobile_dense(i, pos, sid):
     s = ss.songs.get(sid, None)
-    if not s: return
+    if not s:
+        return
     wrapper_class = "dense" if ss.dense_mode else ""
-    with st.container():
-        st.markdown(f"<div class='songcard {wrapper_class}'>", unsafe_allow_html=True)
-        # Erste Zeile: Titel links, Dauer rechts
+    st.markdown(f"<div class='songcard {wrapper_class}'>", unsafe_allow_html=True)
+    # Erste Zeile: Titel links, Dauer rechts
+    st.markdown(
+        f"<div class='songline'><h4>{s['title']}</h4><span class='duration'>{seconds_to_mmss(s['duration_s'])}</span></div>",
+        unsafe_allow_html=True
+    )
+    # Zweite Zeile: Artist (ellipsized), Key, Tempo, Actions rechts
+    col_info, col_actions = st.columns([4,2])
+    with col_info:
+        artist = s.get('artist','').strip()
+        artist_html = f"<span class='artist'>{artist}</span>" if artist else ""
         st.markdown(
-            f"<div class='songline'><h4>{s['title']}</h4><span class='duration'>{seconds_to_mmss(s['duration_s'])}</span></div>",
+            f"<div class='songmeta'>{artist_html}"
+            f"<span class='chip'>🎼 {s.get('key','') or '–'}</span>"
+            f"<span class='chip'>🎚 {s.get('tempo','') or '–'}</span>"
+            f"</div>",
             unsafe_allow_html=True
         )
-        # Zweite Zeile: Artist (ellipsized), Key, Tempo, Actions rechts
-        col_info, col_actions = st.columns([4,2])
-        with col_info:
-            artist = s.get('artist','').strip()
-            artist_html = f"<span class='artist'>{artist}</span>" if artist else ""
-            st.markdown(
-                f"<div class='songmeta'>{artist_html}"
-                f"<span class='chip'>🎼 {s.get('key','') or '–'}</span>"
-                f"<span class='chip'>🎚 {s.get('tempo','') or '–'}</span>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        with col_actions:
-            g1, g2, g3, g4 = st.columns([1,1,1,1])
-            with g1:
-                if st.button("↑", key=f"mup_{i}_{sid}") and pos > 0:
-                    ss.sets[i][pos-1], ss.sets[i][pos] = ss.sets[i][pos], ss.sets[i][pos-1]
-                    st.rerun()
-            with g2:
-                if st.button("↓", key=f"mdown_{i}_{sid}") and pos < len(ss.sets[i]) - 1:
-                    ss.sets[i][pos+1], ss.sets[i][pos] = ss.sets[i][pos], ss.sets[i][pos+1]
-                    st.rerun()
-            with g3:
-                if st.button("✕", key=f"mrm_{i}_{sid}"):
-                    ss.sets[i].remove(sid)
-                    st.rerun()
-            with g4:
-                st.checkbox(" ", key=f"sel_{i}_{sid}")
-        st.markdown("</div>", unsafe_allow_html=True)
+    with col_actions:
+        g1, g2, g3, g4 = st.columns([1,1,1,1])
+        with g1:
+            if st.button("↑", key=f"mup_{i}_{sid}") and pos > 0:
+                ss.sets[i][pos-1], ss.sets[i][pos] = ss.sets[i][pos], ss.sets[i][pos-1]
+                st.rerun()
+        with g2:
+            if st.button("↓", key=f"mdown_{i}_{sid}") and pos < len(ss.sets[i]) - 1:
+                ss.sets[i][pos+1], ss.sets[i][pos] = ss.sets[i][pos], ss.sets[i][pos+1]
+                st.rerun()
+        with g3:
+            if st.button("✕", key=f"mrm_{i}_{sid}"):
+                ss.sets[i].remove(sid)
+                st.rerun()
+        with g4:
+            st.checkbox(" ", key=f"sel_{i}_{sid}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def render_song_row_desktop(i, pos, sid):
     s = ss.songs.get(sid, None)
-    if not s: return
+    if not s:
+        return
     c1, c2, c3, c4, c5, c6 = st.columns([6,1,1,1,2,0.7])
     with c1:
         st.markdown(f"<div class='title'>{s['title']}</div><div class='sub'>{s.get('artist','')}</div>", unsafe_allow_html=True)
@@ -350,7 +357,6 @@ with st.expander("🎼 Sets", expanded=True):
             unsafe_allow_html=True
         )
 
-        # Rows/Cards
         for pos, sid in enumerate(ids):
             if ss.mobile_mode:
                 render_song_card_mobile_dense(i, pos, sid)
@@ -384,14 +390,17 @@ with st.expander("🎼 Sets", expanded=True):
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ========================
-# 📤 Export – PDFs & CSV (wie gehabt)
+# 📤 Export – PDFs & CSV
 # ========================
 with st.expander("📤 Export", expanded=False):
     concert_name = st.text_input("Titel auf Export", value=ss.get("concert_name",""), key="concert_name_input_2")
     ss["concert_name"] = concert_name
 
+    # Helpers fuer runde Rechtecke
     def rounded_rect(pdf, x, y, w, h, r=3, style=''):
-        k = pdf.k; hp = pdf.h; myArc = 4/3 * (math.sqrt(2) - 1)
+        k = pdf.k
+        hp = pdf.h
+        myArc = 4/3 * (math.sqrt(2) - 1)
         pdf._out('q')
         pdf._out('%.2F %.2F m' % ((x+r)*k, (hp-y)*k))
         pdf._out('%.2F %.2F l' % ((x+w-r)*k, (hp-y)*k))
@@ -402,67 +411,110 @@ with st.expander("📤 Export", expanded=False):
         pdf._out('%.2F %.2F %.2F %.2F %.2F %.2F c' % ((x+r*myArc)*k, (hp-(y+h))*k, x*k, (hp-(y+h-r*myArc))*k, x*k, (hp-(y+h-r))*k))
         pdf._out('%.2F %.2F l' % (x*k, (hp-(y+r))*k))
         pdf._out('%.2F %.2F %.2F %.2F %.2F %.2F c' % (x*k, (hp-(y+r*myArc))*k, (x+r*myArc)*k, (hp-y)*k, (x+r)*k, (hp-y)*k))
-        if style == 'F': op='f'
-        elif style in ('FD','DF'): op='B'
-        else: op='S'
-        pdf._out(op); pdf._out('Q')
+        if style == 'F':
+            op='f'
+        elif style in ('FD','DF'):
+            op='B'
+        else:
+            op='S'
+        pdf._out(op)
+        pdf._out('Q')
 
     def mmss_local(total):
         m, s = divmod(int(total), 60)
         return f"{m:02d}:{s:02d}"
 
     def new_page_with_header(pdf, title_text):
-        pdf.add_page(); pdf.set_auto_page_break(True, 14)
-        pdf.set_draw_color(0,77,89); pdf.set_fill_color(0,77,89)
+        pdf.add_page()
+        pdf.set_auto_page_break(True, 14)
+        pdf.set_draw_color(0,77,89)
+        pdf.set_fill_color(0,77,89)
         rounded_rect(pdf, 10, 10, 190, 14, r=5, style='F')
-        pdf.set_text_color(255,255,255); pdf.set_font("Helvetica","B",14); pdf.set_xy(10, 12)
-        pdf.cell(190,10, title_text, align="C"); pdf.ln(12)
+        pdf.set_text_color(255,255,255)
+        pdf.set_font("Helvetica","B",14)
+        pdf.set_xy(10, 12)
+        pdf.cell(190,10, title_text, align="C")
+        pdf.ln(12)
 
     def make_pdf_concert() -> bytes:
-        if not HAS_PDF: raise RuntimeError("fpdf2 nicht installiert")
+        if not HAS_PDF:
+            raise RuntimeError("fpdf2 nicht installiert")
         pdf = FPDF(orientation="P", unit="mm", format="A4")
         for si in range(ss.active_sets):
             new_page_with_header(pdf, "BD Setlist")
-            pdf.set_text_color(0,77,89); pdf.set_font("Helvetica","B",16)
-            pdf.cell(0,10, (ss.get("concert_name") or "Setliste") + f" – Set {si+1}", ln=1); pdf.ln(1)
-            pdf.set_font("Helvetica","B",11); pdf.set_draw_color(229,231,235); pdf.set_fill_color(241,245,249); pdf.set_text_color(17,24,39)
-            pdf.cell(10,8,"#",1,0,"C",True); pdf.cell(100,8,"Titel",1,0,"L",True); pdf.cell(22,8,"Dauer",1,0,"C",True); pdf.cell(22,8,"Tonart",1,0,"C",True); pdf.cell(22,8,"Tempo",1,1,"C",True)
+            pdf.set_text_color(0,77,89)
+            pdf.set_font("Helvetica","B",16)
+            pdf.cell(0,10, (ss.get("concert_name") or "Setliste") + f" – Set {si+1}", ln=1)
+            pdf.ln(1)
+            pdf.set_font("Helvetica","B",11)
+            pdf.set_draw_color(229,231,235)
+            pdf.set_fill_color(241,245,249)
+            pdf.set_text_color(17,24,39)
+            pdf.cell(10,8,"#",1,0,"C",True)
+            pdf.cell(100,8,"Titel",1,0,"L",True)
+            pdf.cell(22,8,"Dauer",1,0,"C",True)
+            pdf.cell(22,8,"Tonart",1,0,"C",True)
+            pdf.cell(22,8,"Tempo",1,1,"C",True)
             pdf.set_font("Helvetica","",11)
             for idx, sid in enumerate(ss.sets[si], start=1):
-                s = ss.songs.get(sid); if not s: continue
-                pdf.cell(10,8,str(idx),1,0,"C"); pdf.cell(100,8,s["title"],1,0,"L")
-                pdf.cell(22,8,mmss_local(s["duration_s"]),1,0,"C"); pdf.cell(22,8,s.get("key",""),1,0,"C"); pdf.cell(22,8,s.get("tempo",""),1,1,"C")
+                s = ss.songs.get(sid)
+                if not s:
+                    continue
+                pdf.cell(10,8,str(idx),1,0,"C")
+                pdf.cell(100,8,s["title"],1,0,"L")
+                pdf.cell(22,8,mmss_local(s["duration_s"]),1,0,"C")
+                pdf.cell(22,8,s.get("key",""),1,0,"C")
+                pdf.cell(22,8,s.get("tempo",""),1,1,"C")
             pdf.set_font("Helvetica","B",11)
             total = sum(ss.songs[i]["duration_s"] for i in ss.sets[si])
-            pdf.cell(110,8,"Setdauer",1,0,"R"); pdf.cell(22,8,mmss_local(total),1,0,"C"); pdf.cell(22,8,"",1,0); pdf.cell(22,8,"",1,1)
-        out = pdf.output(dest="S"); 
-        if isinstance(out, bytearray): return bytes(out)
-        if isinstance(out, str): return out.encode("latin-1","replace")
+            pdf.cell(110,8,"Setdauer",1,0,"R")
+            pdf.cell(22,8,mmss_local(total),1,0,"C")
+            pdf.cell(22,8,"",1,0)
+            pdf.cell(22,8,"",1,1)
+        out = pdf.output(dest="S")
+        if isinstance(out, bytearray):
+            return bytes(out)
+        if isinstance(out, str):
+            return out.encode("latin-1","replace")
         return out
 
     def make_pdf_suisa() -> bytes:
-        if not HAS_PDF: raise RuntimeError("fpdf2 nicht installiert")
+        if not HAS_PDF:
+            raise RuntimeError("fpdf2 nicht installiert")
         pdf = FPDF(orientation="P", unit="mm", format="A4")
         for si in range(ss.active_sets):
             new_page_with_header(pdf, "BD SUISA-Liste")
-            pdf.set_text_color(0,77,89); pdf.set_font("Helvetica","B",16)
-            pdf.cell(0,10, (ss.get("concert_name") or "SUISA Liste") + f" – Set {si+1}", ln=1); pdf.ln(1)
-            pdf.set_font("Helvetica","B",11); pdf.set_draw_color(229,231,235); pdf.set_fill_color(241,245,249); pdf.set_text_color(17,24,39)
-            pdf.cell(120,8,"Titel",1,0,"L",True); pdf.cell(70,8,"Artist",1,1,"L",True)
+            pdf.set_text_color(0,77,89)
+            pdf.set_font("Helvetica","B",16)
+            pdf.cell(0,10, (ss.get("concert_name") or "SUISA Liste") + f" – Set {si+1}", ln=1)
+            pdf.ln(1)
+            pdf.set_font("Helvetica","B",11)
+            pdf.set_draw_color(229,231,235)
+            pdf.set_fill_color(241,245,249)
+            pdf.set_text_color(17,24,39)
+            pdf.cell(120,8,"Titel",1,0,"L",True)
+            pdf.cell(70,8,"Artist",1,1,"L",True)
             pdf.set_font("Helvetica","",11)
             for sid in ss.sets[si]:
-                s = ss.songs.get(sid); if not s: continue
-                pdf.cell(120,8,s["title"],1,0,"L"); pdf.cell(70,8,s.get("artist",""),1,1,"L")
-        out = pdf.output(dest="S"); 
-        if isinstance(out, bytearray): return bytes(out)
-        if isinstance(out, str): return out.encode("latin-1","replace")
+                s = ss.songs.get(sid)
+                if not s:
+                    continue
+                pdf.cell(120,8,s["title"],1,0,"L")
+                pdf.cell(70,8,s.get("artist",""),1,1,"L")
+        out = pdf.output(dest="S")
+        if isinstance(out, bytearray):
+            return bytes(out)
+        if isinstance(out, str):
+            return out.encode("latin-1","replace")
         return out
 
     def make_csv() -> bytes:
         lines = ["Titel,Dauer,Tonart,Tempo,Artist,Set"]
         for si in range(ss.active_sets):
             for sid in ss.sets[si]:
-                s = ss.songs.get(sid); if not s: continue
+                s = ss.songs.get(sid)
+                if not s:
+                    continue
                 title = s["title"].replace(","," ")
                 dur = seconds_to_mmss(s["duration_s"])
                 key = (s.get("key","") or "").replace(","," ")
