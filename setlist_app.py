@@ -1,8 +1,5 @@
 
-# Setlist App – Version 2.0.4
-# • Sets: Mehrfachauswahl + Buttons "Ausgewählte → anderes Set" & "Ausgewählte → Pool"
-# • Repertoire: ohne "Alle auswählen"
-# • Layout wie 2.0.3 (Inline-Row, kompakt)
+# Setlist App – Version 2.0.5
 
 import streamlit as st
 
@@ -17,8 +14,8 @@ ss = st.session_state
 # ========================
 # Branding & Page Config
 # ========================
-st.set_page_config(page_title="BD Setlist 2.0.4", layout="wide")
-st.title("BD Setlist 2.0.4")
+st.set_page_config(page_title="BD Setlist 2.0.5", layout="wide")
+st.title("BD Setlist 2.0.5")
 
 st.markdown("""
 <style>
@@ -26,9 +23,6 @@ st.markdown("""
 
 :root{
   --brand:#004D59;
-  --accent:#F7A600;
-  --beige:#FDF1E7;
-  --blue:#E3F2FD;
   --muted:#6b7280;
   --radius:14px;
 }
@@ -37,27 +31,43 @@ html, body, [class*="block-container"] { font-size:15px; }
 h1, h2, h3, h4, h5, h6, .stButton>button { font-family: 'Montserrat', sans-serif; font-weight: 700; }
 *, .stTextInput>div>div>input, .stNumberInput>div>input { font-family: 'Space Mono', monospace; }
 
+/* Neutralize default blue/orange UI pills/bars */
+div[data-baseweb="select"] > div { background: #fff !important; }
+div[role="radiogroup"] label { background:#e5e7eb !important; border-radius:999px; padding:6px 12px; border:1px solid #cbd5e1; }
+div[role="radiogroup"] input:checked + div > label { background:#e5e7eb !important; color:#111 !important; border-color:#cbd5e1 !important; }
+
+/* Buttons */
 .stButton>button {
   background-color: var(--brand);
   color: white;
   border: none;
   border-radius: 8px;
-  padding: 4px 10px;
+  padding: 6px 12px;
   font-size: 14px;
 }
 .stButton>button:hover { background-color: #00738A; }
 
+/* Cards */
 .card { background: #fff; border: 1px solid #e5e7eb; border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; }
-.card-beige { background: var(--beige); }
-.card-blue { background: var(--blue); }
 
-.rowchip{padding:4px 8px;border-radius:8px;border:1px solid #e5e7eb;background:#eef2f7;display:inline-block;min-width:58px;text-align:center;}
+/* Chips */
+.rowchip{padding:4px 8px;border-radius:8px;border:1px solid #e5e7eb;background:#f3f4f6;display:inline-block;min-width:58px;text-align:center;}
+
 .title{font-weight:700;margin:0;padding:0;}
 .sub{font-size:12px;color:var(--muted);margin-top:2px;}
 
-.headerlabel{font-weight:700;color:#374151;font-size:14px;margin-bottom:4px;}
-.delta{padding:6px 10px;border-radius:10px;font-weight:700;}
-.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:8px 0;}
+.headerlabel{font-weight:700;color:#374151;font-size:14px;margin-bottom:6px;}
+
+/* Inline toolbar */
+.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:nowrap;margin:8px 0;}
+.toolbar > div { display:flex; align-items:center; }
+.toolbar .stSelectbox, .toolbar .stButton { margin-top: 0 !important; }
+
+/* Compact icon button */
+.iconbtn > button { padding:4px 10px; border-radius:8px; min-width:44px; }
+
+/* Remove any accidental full-width color bars inside expanders */
+.st-emotion-cache-1avcm0n, .st-emotion-cache-1y4p8pa { background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -92,18 +102,6 @@ def seconds_to_mmss(total):
 def total_duration(ids):
     return sum(ss.songs[i]["duration_s"] for i in ids if i in ss.songs)
 
-def delta_style(cur_s, tgt_min):
-    delta = cur_s - tgt_min * 60
-    if delta <= 0:
-        bg, fg = "#E6F4EA", "#0E7C3A"
-    elif delta >= 600:
-        bg, fg = "#FDE8E8", "#B42318"
-    elif delta >= 60:
-        bg, fg = "#FFF4E5", "#7A3E00"
-    else:
-        bg, fg = "#EEF2F7", "#111827"
-    return f"background:{bg};color:{fg};"
-
 # ========================
 # Session Defaults
 # ========================
@@ -124,7 +122,7 @@ def init_state():
 init_state()
 
 # ========================
-# Setlist 1.0 – eingebettet
+# Seed list
 # ========================
 SETLIST_1_0 = [
     ("Alors, don't start the blinding lights","Dua Lipa, Stromae, The Weeknd","05:26"),
@@ -159,8 +157,7 @@ def seed_setlist_from_list(rows):
     ss.songs.clear()
     ss.next_id = 1
     for title, artist, dur in rows:
-        if not title:
-            continue
+        if not title: continue
         ss.songs[ss.next_id] = {
             "title": title.strip(),
             "duration_s": parse_mmss(dur),
@@ -198,14 +195,14 @@ with st.expander("➕ Neuen Song anlegen", expanded=False):
             st.rerun()
 
 # ========================
-# 🎵 Repertoire (ohne Alle auswählen)
+# 🎵 Repertoire (neutral)
 # ========================
 def pool_ids():
     used = set(i for s in ss.sets[:ss.active_sets] for i in s)
     return sorted([i for i in ss.songs if i not in used], key=lambda i: ss.songs[i]["title"].lower())
 
 with st.expander("🎵 Repertoire", expanded=True):
-    st.markdown("<div class='card card-blue'>", unsafe_allow_html=True)
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
     pool = pool_ids()
     left, right = st.columns(2)
     selected = []
@@ -215,7 +212,7 @@ with st.expander("🎵 Repertoire", expanded=True):
         with (left if idx % 2 == 0 else right):
             if st.checkbox(label, key=f"pool_cb_{sid}"):
                 selected.append(sid)
-    dest = st.radio("Ziel Set", [1,2,3][:ss.active_sets], horizontal=True, format_func=lambda i: f"{i} Set")
+    dest = st.radio("Ziel Set", [1,2,3][:ss.active_sets], horizontal=True, format_func=lambda i: f"Set {i}")
     if st.button("Auswahl in Set übernehmen"):
         if selected:
             tgt = dest - 1
@@ -229,7 +226,7 @@ with st.expander("🎵 Repertoire", expanded=True):
 # 🔢 Anzahl Set
 # ========================
 with st.expander("🔢 Anzahl Set", expanded=False):
-    new_count = st.radio("Anzahl", [1,2,3], index=ss.active_sets-1, horizontal=True, format_func=lambda i: f"{i} Set")
+    new_count = st.radio("Anzahl", [1,2,3], index=ss.active_sets-1, horizontal=True, format_func=lambda i: f"Set {i}")
     if new_count != ss.active_sets:
         ss.active_sets = new_count
         st.rerun()
@@ -241,16 +238,13 @@ with st.expander("🎼 Sets", expanded=True):
     for i in range(ss.active_sets):
         ids = ss.sets[i]
         st.subheader(f"Set {i+1}")
-        st.markdown("<div class='card card-beige'>", unsafe_allow_html=True)
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
 
         tcol1, tcol2 = st.columns([3,1])
         tgt = tcol1.number_input(f"Ziel Minuten · Set {i+1}", 0, 300, ss.targets_min[i], key=f"tgt_{i}")
         ss.targets_min[i] = tgt
         cur_s = total_duration(ids)
-        tcol2.markdown(
-            f"<div class='delta' style='background:#EEF2F7;color:#111;text-align:right;'>Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>",
-            unsafe_allow_html=True
-        )
+        tcol2.markdown(f"<div style='text-align:right;'>Aktuell {seconds_to_mmss(cur_s)} · Ziel {tgt:02d}:00</div>", unsafe_allow_html=True)
 
         # Header
         h1, h2, h3, h4, h5, h6 = st.columns([6,1,1,1,2,0.7])
@@ -264,8 +258,7 @@ with st.expander("🎼 Sets", expanded=True):
         # Rows
         for pos, sid in enumerate(ids):
             s = ss.songs.get(sid, None)
-            if not s:
-                continue
+            if not s: continue
             c1, c2, c3, c4, c5, c6 = st.columns([6,1,1,1,2,0.7])
             with c1:
                 st.markdown(f"<div class='title'>{s['title']}</div><div class='sub'>{s.get('artist','')}</div>", unsafe_allow_html=True)
@@ -286,18 +279,18 @@ with st.expander("🎼 Sets", expanded=True):
                         ids[pos+1], ids[pos] = ids[pos], ids[pos+1]
                         st.rerun()
                 with b3:
-                    if st.button("Löschen", key=f"rm_{i}_{sid}"):
+                    if st.button("✕", key=f"rm_{i}_{sid}"):
                         ids.remove(sid)
                         st.rerun()
             with c6:
                 st.checkbox("", key=f"sel_{i}_{sid}")
 
-        # Multi-Action Toolbar
+        # Multi-Action Toolbar (aligned one line)
         st.markdown("<div class='toolbar'>", unsafe_allow_html=True)
-        col_a, col_b, col_c = st.columns([1.4,1.6,1])
-        with col_a:
-            target = st.selectbox("Zielset", [j+1 for j in range(ss.active_sets) if j != i], key=f"dest_{i}", format_func=lambda v: f"{v} Set")
-        with col_b:
+        tb1, tb2, tb3 = st.columns([1.2, 1.2, 1])
+        with tb1:
+            target = st.selectbox("Zielset", [j+1 for j in range(ss.active_sets) if j != i], key=f"dest_{i}", format_func=lambda v: f"Set {v}")
+        with tb2:
             if st.button("Ausgewählte → anderes Set", key=f"mv_{i}"):
                 move_ids = [sid for sid in ids if ss.get(f"sel_{i}_{sid}", False)]
                 if move_ids:
@@ -308,7 +301,7 @@ with st.expander("🎼 Sets", expanded=True):
                             if sid not in ss.sets[tgt_idx]:
                                 ss.sets[tgt_idx].append(sid)
                 st.rerun()
-        with col_c:
+        with tb3:
             if st.button("Ausgewählte → Pool", key=f"pool_{i}"):
                 pool_back = [sid for sid in ids if ss.get(f"sel_{i}_{sid}", False)]
                 for sid in pool_back:
